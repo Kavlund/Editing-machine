@@ -1,0 +1,392 @@
+"""Palmier MCP video editing: new project → import → AI plan → edit → export."""
+
+from __future__ import annotations
+import json, os, re, time, requests
+from pathlib import Path
+
+PALMIER_URL = "http://127.0.0.1:19789/mcp"
+_mcp_seq = 0
+
+
+def _mcp(tool: str, args: dict) -> dict:
+    global _mcp_seq
+    _mcp_seq += 1
+    resp = requests.post(PALMIER_URL, json={
+        "jsonrpc": "2.0",
+        "id": _mcp_seq,
+        "method": "tools/call",
+        "params": {"name": tool, "arguments": args},
+    }, timeout=180)
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Palmier {tool}: {data['error']}")
+    content = data.get("result", {}).get("content", [{}])
+    text = content[0].get("text", "{}") if content else "{}"
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {"raw": text}
+
+
+def palmier_available() -> bool:
+    for attempt in range(3):
+        try:
+            r = requests.post(PALMIER_URL, json={
+                "jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": {}
+            }, timeout=5)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(2)
+    return False
+
+
+def _find_media(name_hint: str) -> str | None:
+    """Poll get_media until a newly-imported asset is fully copied (not downloading)."""
+    stem = Path(name_hint).stem.lower()
+    _PENDING = {"downloading", "preparing", "generating"}
+    for _ in range(45):  # up to ~90 seconds
+        resp = _mcp("get_media", {})
+        items = (resp.get("entries") or resp.get("media") or resp.get("assets") or resp.get("items") or [])
+        for item in items:
+            n = (item.get("name") or item.get("filename") or "").lower()
+            if stem in n:
+                status = item.get("generationStatus", "none")
+                if status not in _PENDING:
+                    return item["id"]
+                # found but still copying — keep polling
+        time.sleep(2)
+    return None
+
+
+def _get_clips(track_index: int = 0) -> list:
+    """Return clips from a given track."""
+    timeline = _mcp("get_timeline", {})
+    clips = timeline.get("clips", [])
+    return [c for c in clips if c.get("trackIndex", 0) == track_index]
+
+
+def run_palmier_edit(
+    video_path: Path,
+    instructions: str,
+    client: dict,
+    output_path: Path,
+    log_fn,
+    broll_dir: Path | None = None,
+    cancel_check_fn=None,
+) -> Path:
+    """
+    Full Palmier editing flow driven by natural language instructions.
+
+    1. Create fresh Palmier project
+    2. Import + place video on V1 timeline track
+    3. Read color scopes
+    4. Get transcript for word-level cuts
+    5. Ask Claude for a comprehensive edit plan
+    6. Execute: cuts → color → zoom → captions → text overlays → B-roll → music → export
+    """
+    import anthropic as ant
+
+    editing = client.get("editing", {})
+    brand   = client.get("brand", {})
+    caption_color   = editing.get("caption_color", "#ffffff")
+    highlight_color = brand.get("accent_color", "#FFE500")
+    caption_size    = int(editing.get("caption_font_size", 72))
+    anthropic_key   = os.environ.get("ANTHROPIC_API_KEY", "")
+
+    if not anthropic_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set — needed for AI edit planning")
+
+    def _chk():
+        if cancel_check_fn:
+            cancel_check_fn()
+
+    # ── 1. New project ─────────────────────────────────────────────────────────
+    job_name = output_path.parent.name[:40]
+    log_fn(f"Palmier: creating fresh project '{job_name}'...")
+    _mcp("new_project", {"name": job_name})
+    time.sleep(1)  # let Palmier open it
+
+    # ── 2. Import video into project library ───────────────────────────────────
+    log_fn(f"Palmier: importing {video_path.name}...")
+    _mcp("import_media", {"source": {"path": str(video_path)}, "name": video_path.name})
+
+    video_media_id = _find_media(video_path.name)
+    if not video_media_id:
+        raise RuntimeError(f"Video '{video_path.name}' did not appear in Palmier media library after 60s")
+    log_fn(f"Palmier: video media id = {video_media_id}")
+
+    # Place video on V1 timeline track
+    _mcp("add_clips", {"entries": [{"mediaRef": video_media_id, "startFrame": 0}]})
+    time.sleep(0.5)
+
+    # Find clip ID on V1
+    v1_clips = _get_clips(track_index=0)
+    if not v1_clips:
+        raise RuntimeError("No clips on V1 track after placing video")
+    main_clip = v1_clips[0]
+    main_clip_id  = main_clip["id"]
+    clip_end_frame = main_clip.get("endFrame", main_clip.get("durationFrames", 3600))
+    log_fn(f"Palmier: V1 clip={main_clip_id} endFrame={clip_end_frame}")
+
+    # ── 3. Color scopes ────────────────────────────────────────────────────────
+    _chk()
+    log_fn("Palmier: reading color scopes...")
+    scopes     = _mcp("inspect_color", {"clipId": main_clip_id})
+    saturation = float(scopes.get("saturation", 0.2))
+    warm_cool  = float(scopes.get("warmCool", 0.0))
+    log_fn(f"Palmier: sat={saturation:.3f} warmCool={warm_cool:.3f}")
+
+    # ── 4. Transcript ──────────────────────────────────────────────────────────
+    _chk()
+    log_fn("Palmier: fetching transcript...")
+    palm_t     = _mcp("get_transcript", {})
+    palm_words = palm_t.get("words", [])
+    log_fn(f"Palmier: {len(palm_words)} words")
+    if not palm_words:
+        raise RuntimeError("Palmier transcript is empty")
+
+    word_list = "\n".join(
+        f"[{i}] {w.get('word') or w.get('text') or ''}"
+        for i, w in enumerate(palm_words)
+    )
+
+    # ── 5. AI edit plan ────────────────────────────────────────────────────────
+    _chk()
+    log_fn("Palmier: generating edit plan...")
+    system = f"""You are a professional short-form video editor for social media (TikTok / Instagram Reels / YouTube Shorts).
+Return ONLY a valid JSON object — no markdown, no explanation, just the raw JSON.
+
+Source footage analysis:
+  saturation = {saturation:.3f}  (0=greyscale · 0.15=normal · 0.3+=vivid)
+  warmCool   = {warm_cool:.3f}   (positive=warm/orange · negative=cool/blue)
+  duration   = ~{clip_end_frame} frames at 60fps
+
+Client style:
+  caption color:    {caption_color}
+  highlight color:  {highlight_color}
+  caption fontSize: {caption_size}px
+
+User editing instructions: "{instructions}"
+
+Return exactly this JSON (fill ALL fields — even ones not mentioned in instructions, use sensible defaults):
+{{
+  "words_to_cut": [array of integer word indices to remove — AGGRESSIVELY cut: ums, ahs, repeated words, filler phrases like "you know", "like", "basically", long pauses, restarts, off-topic tangents. Cut at least 10-20% of words for a tight edit],
+  "color_grade": {{
+    "blacks":      <int -10 to 0, default -5 — lift shadows slightly>,
+    "contrast":    <int 0 to 12, default 8 — add punch>,
+    "highlights":  <int -10 to 0, default -5 — pull highlights down>,
+    "saturation":  <int — CRITICAL: source={saturation:.3f}. Above 0.15 → -5 to -10. Below 0.08 → +5. Between → 0>,
+    "temperature": <int — CRITICAL: warmCool={warm_cool:.3f}. If positive (warm) → 0 or -3. Never positive on warm footage>
+  }},
+  "zoom": {{
+    "enabled":  <true to add a slow subtle zoom (very popular in talking-head reels), false to skip>,
+    "strength": <float 0.05 to 0.15 — how much zoom. 0.08 is subtle, 0.12 is noticeable. Default 0.08>
+  }},
+  "hook_text": <punchy hook string in CAPS to overlay at top of video that makes people stop scrolling — derive from content. Null only if instructions explicitly say no hook>,
+  "lower_thirds": [
+    <array of objects, each: {{"text": "short label", "y": 0.85}} — e.g. speaker name/title, CTA text. Keep to 1-2 max. Empty array if none needed>
+  ],
+  "music": {{
+    "enabled":  <true if instructions mention background music, false otherwise>,
+    "prompt":   <style/mood for AI music generation e.g. "uplifting motivational trap beat, no vocals, 90bpm">,
+    "volume":   <float 0.05 to 0.2 — background music volume. Default 0.1>
+  }},
+  "cut_aggressiveness": "tight"
+}}"""
+
+    sdk  = ant.Anthropic(api_key=anthropic_key)
+    resp = sdk.messages.create(
+        model="claude-sonnet-5",
+        max_tokens=3000,
+        system=system,
+        messages=[{"role": "user", "content": f"Transcript:\n{word_list[:8000]}"}],
+    )
+    raw = resp.content[0].text.strip()
+    m   = re.search(r'\{.*\}', raw, re.DOTALL)
+    if not m:
+        raise RuntimeError(f"AI returned unparseable plan: {raw[:300]}")
+    plan = json.loads(m.group())
+
+    words_to_cut  = [int(x) for x in plan.get("words_to_cut", [])]
+    grade         = plan.get("color_grade", {})
+    zoom          = plan.get("zoom", {})
+    hook_text     = plan.get("hook_text") or None
+    lower_thirds  = plan.get("lower_thirds", [])
+    music         = plan.get("music", {})
+    agg           = plan.get("cut_aggressiveness", "tight")
+    log_fn(f"Palmier: plan — cut {len(words_to_cut)} words, zoom={zoom.get('enabled')}, hook={hook_text!r}, music={music.get('enabled')}")
+
+    # ── 6. Execute ─────────────────────────────────────────────────────────────
+    _chk()
+
+    # 6a. Cut filler words
+    if words_to_cut:
+        log_fn(f"Palmier: removing {len(words_to_cut)} filler words...")
+        _mcp("remove_words", {"words": words_to_cut, "cutAggressiveness": agg})
+
+    # 6b. Color grade
+    log_fn("Palmier: applying adaptive color grade...")
+    _mcp("apply_color", {"clipIds": [main_clip_id], "reset": True})
+    grade_args: dict = {"clipIds": [main_clip_id]}
+    for k in ("blacks", "contrast", "highlights", "saturation", "temperature"):
+        if grade.get(k, 0) != 0:
+            grade_args[k] = grade[k]
+    if len(grade_args) > 1:
+        _mcp("apply_color", grade_args)
+
+    # 6c. Zoom — slow push-in via scale keyframes
+    if zoom.get("enabled"):
+        strength = float(zoom.get("strength", 0.08))
+        end_scale = round(1.0 + strength, 3)
+        log_fn(f"Palmier: adding zoom {1.0} → {end_scale}x over {clip_end_frame} frames...")
+        try:
+            _mcp("set_keyframes", {
+                "clipId":    main_clip_id,
+                "property":  "scale",
+                "keyframes": [[0, 1.0, 1.0], [clip_end_frame, end_scale, end_scale]],
+            })
+        except Exception as e:
+            log_fn(f"Palmier: zoom keyframes failed (skipping) — {e}")
+
+    # 6d. Karaoke captions
+    log_fn("Palmier: adding karaoke captions...")
+    _mcp("add_captions", {
+        "color":          caption_color,
+        "highlightColor": highlight_color,
+        "isBold":         True,
+        "fontSize":       caption_size,
+        "alignment":      "center",
+        "maxWords":       3,
+        "animation":      "highlightPop",
+        "centerY":        0.72,
+    })
+
+    # 6e. Hook text overlay at top
+    if hook_text:
+        log_fn(f"Palmier: adding hook '{hook_text}'...")
+        _mcp("add_texts", {
+            "text":      hook_text.upper(),
+            "color":     highlight_color,
+            "fontSize":  52,
+            "isBold":    True,
+            "transform": {"centerX": 0.5, "centerY": 0.1, "width": 0.85, "height": 0.08},
+        })
+
+    # 6f. Lower thirds / CTA overlays
+    for lt in (lower_thirds or []):
+        lt_text = str(lt.get("text", "")).strip()
+        lt_y    = float(lt.get("y", 0.85))
+        if not lt_text:
+            continue
+        log_fn(f"Palmier: adding lower third '{lt_text}' at y={lt_y}...")
+        _mcp("add_texts", {
+            "text":      lt_text,
+            "color":     caption_color,
+            "fontSize":  38,
+            "isBold":    False,
+            "transform": {"centerX": 0.5, "centerY": lt_y, "width": 0.85, "height": 0.07},
+        })
+
+    # 6g. B-roll from client library
+    _chk()
+    if broll_dir and broll_dir.exists():
+        broll_clips = sorted(
+            f for f in broll_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in {".mp4", ".mov", ".m4v"}
+        )
+        if broll_clips:
+            log_fn(f"Palmier: importing {len(broll_clips)} B-roll clip(s)...")
+            _mcp("import_media", {"source": {"path": str(broll_dir)}})
+            time.sleep(3)  # let imports register
+
+            # Refresh timeline to get current duration after cuts
+            updated_clips = _get_clips(0)
+            total_frames = sum(
+                c.get("endFrame", 0) - c.get("startFrame", 0)
+                for c in updated_clips
+            ) or clip_end_frame
+
+            # Distribute B-roll every ~540 frames (9s at 60fps)
+            INTERVAL = 540
+            BROLL_DUR = 210  # ~3.5s at 60fps
+            broll_media = []
+            for brc in broll_clips:
+                mid = _find_media(brc.name)
+                if mid:
+                    broll_media.append(mid)
+
+            if broll_media:
+                entries = []
+                t, idx = INTERVAL, 0
+                while t < total_frames - INTERVAL // 2:
+                    entries.append({
+                        "mediaRef":     broll_media[idx % len(broll_media)],
+                        "startFrame":   t,
+                        "durationFrames": BROLL_DUR,
+                        "trackIndex":   1,
+                    })
+                    idx += 1
+                    t   += INTERVAL
+                if entries:
+                    log_fn(f"Palmier: placing {len(entries)} B-roll insertion(s) on V2...")
+                    _mcp("add_clips", {"entries": entries})
+        else:
+            log_fn("Palmier: B-roll dir exists but empty — skipping")
+
+    # 6h. Background music (optional — only if instructions requested it)
+    if music.get("enabled") and music.get("prompt"):
+        log_fn(f"Palmier: generating background music '{music['prompt']}'...")
+        try:
+            music_resp = _mcp("generate_audio", {
+                "prompt":       music["prompt"],
+                "instrumental": True,
+                "name":         "bg_music",
+            })
+            log_fn(f"Palmier: music generation started — {music_resp}")
+            # Wait for it then add to timeline
+            music_id = _find_media("bg_music")
+            if music_id:
+                _mcp("add_clips", {"entries": [{"mediaRef": music_id, "startFrame": 0}]})
+                # Get the audio clip ID and lower its volume
+                all_clips = _mcp("get_timeline", {}).get("clips", [])
+                audio_clips = [c for c in all_clips if c.get("trackIndex", 0) >= 2]
+                if audio_clips:
+                    _mcp("set_clip_properties", {
+                        "clipIds": [audio_clips[-1]["id"]],
+                        "volume": float(music.get("volume", 0.1)),
+                    })
+                    log_fn("Palmier: background music added and volume set")
+            else:
+                log_fn("Palmier: music did not appear in library — skipping")
+        except Exception as e:
+            log_fn(f"Palmier: music generation failed (skipping) — {e}")
+
+    # ── 7. Export ──────────────────────────────────────────────────────────────
+    log_fn(f"Palmier: exporting to {output_path.name}...")
+    _mcp("export_project", {
+        "mode":       "video",
+        "codec":      "h264",
+        "outputPath": str(output_path),
+        "overwrite":  True,
+    })
+
+    for i in range(150):  # poll up to 5 minutes
+        if cancel_check_fn:
+            try:
+                cancel_check_fn()
+            except RuntimeError:
+                raise  # propagate cancel/timeout
+        if output_path.exists() and output_path.stat().st_size > 100_000:
+            size_mb = output_path.stat().st_size / 1024 / 1024
+            log_fn(f"Palmier: export complete — {size_mb:.1f} MB")
+            return output_path
+        # Every 30 seconds, verify Palmier is still alive
+        if i % 15 == 14 and not palmier_available():
+            raise RuntimeError("Palmier went offline during export — re-open Palmier and retry")
+        time.sleep(2)
+
+    raise RuntimeError("Palmier export timed out after 5 minutes — video may be too long or Palmier froze")

@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Acquisition Empire Editing Machine</title>
+  <link rel="icon" type="image/png" href="/logo-original.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="brand">
+        <img class="brand-logo" src="/logo.png" alt="Acquisition Empire">
+        Acquisition Empire Editing Machine
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-ghost" id="open-clients-btn">Manage Clients</button>
+        <button class="btn btn-ghost btn-sm" id="logout-btn" style="color:var(--text-muted)">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Workspace picker (always visible) -->
+    <div class="workspace-picker">
+      <div class="workspace-picker-label">Client workspace</div>
+      <div class="workspace-picker-row">
+        <div class="select-wrap workspace-select-wrap">
+          <select id="client-select">
+            <option value="">Choose a client to get started...</option>
+          </select>
+          <svg class="select-chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </div>
+        <button class="btn btn-sm btn-ghost" id="new-client-quick-btn">+ New Client</button>
+      </div>
+    </div>
+
+    <!-- No client selected -->
+    <div id="no-client-prompt" class="no-client-prompt">
+      <svg viewBox="0 0 48 48" fill="none" class="no-client-icon"><circle cx="24" cy="18" r="9" stroke="currentColor" stroke-width="2"/><path d="M6 42c0-9.941 8.059-18 18-18s18 8.059 18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <p class="no-client-title">No client selected</p>
+      <p class="no-client-sub">Choose a client above to open their workspace, or add a new one.</p>
+    </div>
+
+    <!-- Workspace (shown when a client is active) -->
+    <div id="workspace-area" hidden>
+
+      <!-- Active client header -->
+      <div class="workspace-client-header" id="workspace-client-header">
+        <span class="wch-dot" id="wch-dot"></span>
+        <span class="wch-name" id="wch-name"></span>
+        <button class="btn btn-xs btn-ghost wch-edit-btn" id="wch-edit-btn">Edit profile</button>
+      </div>
+
+      <!-- Upload card -->
+      <div class="upload-card" id="upload-card">
+
+        <!-- Drop zone -->
+        <div class="drop-zone" id="drop-zone">
+          <input type="file" id="file-browse" accept="video/*,.mov,.mp4,.avi,.mkv,.mxf,.m4v,.mts,.m2ts" multiple>
+          <input type="file" id="file-browse-folder" webkitdirectory multiple style="display:none">
+          <div class="drop-zone-content">
+            <svg class="drop-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="6" y="14" width="36" height="28" rx="3" stroke="currentColor" stroke-width="2"/>
+              <path d="M6 20h36" stroke="currentColor" stroke-width="2"/>
+              <path d="M16 14v-4h16v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M24 28v8M20 32l4-4 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <p class="drop-title">Drop footage here</p>
+            <p class="drop-sub"><label class="link" for="file-browse">Browse files</label> or <label class="link" for="file-browse-folder">browse folder</label></p>
+          </div>
+        </div>
+
+        <!-- File preview -->
+        <div class="file-preview" id="file-preview" hidden>
+          <div class="file-preview-header">
+            <svg viewBox="0 0 20 20" fill="currentColor" class="folder-icon-sm"><path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/></svg>
+            <span class="folder-name" id="preview-folder-name"></span>
+            <span class="file-count" id="preview-file-count"></span>
+            <span class="file-size" id="preview-file-size"></span>
+            <button class="btn-clear" id="clear-files-btn" title="Clear">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            </button>
+          </div>
+          <div class="file-list" id="file-list"></div>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="progress-wrap" id="progress-wrap" hidden>
+          <div class="progress-bar" id="progress-bar"></div>
+          <span class="progress-label" id="progress-label">Uploading...</span>
+        </div>
+
+        <!-- Notes -->
+        <div class="form-row">
+          <label class="field-label">Notes <span class="optional">(optional)</span></label>
+          <textarea id="job-notes" placeholder="e.g. Episode 3, use intro card, keep b-roll from file B"></textarea>
+        </div>
+
+        <!-- Submit -->
+        <button class="btn btn-primary btn-full" id="submit-btn" disabled>
+          Start Processing
+        </button>
+
+      </div>
+
+      <!-- Jobs -->
+      <section class="jobs-section">
+        <div class="jobs-header">
+          <h2 class="section-title" id="jobs-section-title">Jobs</h2>
+          <button class="btn btn-ghost btn-sm" id="refresh-jobs-btn">Refresh</button>
+        </div>
+        <div class="jobs-grid" id="jobs-grid">
+          <p class="empty-state">No jobs yet.</p>
+        </div>
+      </section>
+
+    </div><!-- /workspace-area -->
+
+  </main>
+
+  <!-- Clients Drawer -->
+  <div class="drawer-overlay" id="drawer-overlay"></div>
+  <aside class="drawer" id="clients-drawer">
+    <div class="drawer-header">
+      <h2>Clients</h2>
+      <button class="btn-icon" id="close-drawer-btn">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+      </button>
+    </div>
+    <div class="clients-list" id="clients-list">
+      <p class="empty-state">No clients yet.</p>
+    </div>
+    <div class="drawer-footer">
+      <button class="btn btn-outline btn-full" id="add-client-drawer-btn">+ Add Client</button>
+    </div>
+  </aside>
+
+  <!-- Client Modal -->
+  <div class="modal-overlay" id="modal-overlay" hidden>
+    <div class="modal" id="client-modal">
+      <div class="modal-header">
+        <h2 id="modal-title">New Client</h2>
+        <button class="btn-icon" id="close-modal-btn">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </button>
+      </div>
+
+      <form id="client-form" autocomplete="off">
+
+        <!-- Brand doc analysis -->
+        <div class="brief-upload-zone" id="brief-upload-zone">
+          <input type="file" id="brief-file-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.docx" style="display:none">
+          <div class="brief-upload-inner" id="brief-upload-inner">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-muted);flex-shrink:0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span class="brief-upload-label">Upload brand document to auto-fill</span>
+            <span class="brief-upload-hint">PDF, Word, image or text</span>
+          </div>
+        </div>
+
+        <!-- Identity -->
+        <div class="form-row">
+          <label class="field-label" for="f-name">Client Name *</label>
+          <input type="text" id="f-name" placeholder="e.g. Max Rooney" required>
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="f-niche">Niche / Industry</label>
+          <input type="text" id="f-niche" placeholder="e.g. Real estate, Fitness coaching, SaaS">
+        </div>
+
+        <!-- Brand -->
+        <div class="form-section-header">Brand</div>
+        <div class="form-row-group">
+          <div class="form-row">
+            <label class="field-label">Primary Color</label>
+            <div class="color-row">
+              <input type="color" id="f-primary" value="#ffffff">
+              <input type="text" id="f-primary-hex" class="hex-input" value="#ffffff" maxlength="7">
+            </div>
+          </div>
+          <div class="form-row">
+            <label class="field-label">Accent Color</label>
+            <div class="color-row">
+              <input type="color" id="f-accent" value="#6366f1">
+              <input type="text" id="f-accent-hex" class="hex-input" value="#6366f1" maxlength="7">
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="field-label">Caption Color <span class="optional">text color on videos</span></label>
+          <div class="color-row">
+            <input type="color" id="f-caption-color" value="#ffffff">
+            <input type="text" id="f-caption-color-hex" class="hex-input" value="#ffffff" maxlength="7">
+          </div>
+        </div>
+
+        <!-- Brand Voice -->
+        <div class="form-section-header">Brand Voice</div>
+        <div class="form-row">
+          <label class="field-label">Tone</label>
+          <div class="tone-pills" id="f-tone-pills">
+            <button type="button" class="tone-pill" data-tone="Professional">Professional</button>
+            <button type="button" class="tone-pill" data-tone="Direct">Direct</button>
+            <button type="button" class="tone-pill" data-tone="Educational">Educational</button>
+            <button type="button" class="tone-pill" data-tone="Casual">Casual</button>
+            <button type="button" class="tone-pill" data-tone="Energetic">Energetic</button>
+            <button type="button" class="tone-pill" data-tone="Inspirational">Inspirational</button>
+            <button type="button" class="tone-pill" data-tone="Authoritative">Authoritative</button>
+            <button type="button" class="tone-pill" data-tone="Storytelling">Storytelling</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="f-icp">Ideal Customer Profile</label>
+          <textarea id="f-icp" rows="2" placeholder="e.g. Business owners 35–55, struggling with team management and scaling"></textarea>
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="f-cta">Call to Action <span class="optional">optional</span></label>
+          <input type="text" id="f-cta" placeholder='e.g. "Follow for more" or "Book a free call"'>
+        </div>
+        <div class="form-row">
+          <label class="field-label" for="f-specific">
+            Specific Instructions <span class="required-tag">highest priority</span>
+          </label>
+          <textarea id="f-specific" rows="3"
+            placeholder='Hard rules the AI must ALWAYS follow for this client, overriding everything else. e.g. "Captions must always be red." · "Never add zoom." · "Always keep a hook." · Leave blank only if there are none.'></textarea>
+          <p class="field-hint">These override the settings below (colours, captions, etc.) on every video.</p>
+        </div>
+
+        <!-- Technical -->
+        <details class="advanced-block">
+          <summary>Technical settings</summary>
+          <div class="advanced-inner">
+            <div class="form-row-group">
+              <div class="form-row">
+                <label class="field-label" for="f-language">Language</label>
+                <div class="select-wrap">
+                  <select id="f-language">
+                    <option value="en">English</option>
+                    <option value="da">Danish</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="auto">Auto-detect</option>
+                  </select>
+                  <svg class="select-chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                </div>
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="f-speakers">Speakers</label>
+                <div class="select-wrap">
+                  <select id="f-speakers">
+                    <option value="1">1 — on-camera only</option>
+                    <option value="2" selected>2 — talent + reader</option>
+                  </select>
+                  <svg class="select-chevron" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                </div>
+              </div>
+            </div>
+            <div class="form-row">
+              <label class="field-label" for="f-grade">Grade Filter</label>
+              <textarea id="f-grade" class="mono" rows="3">colorlevels=rimax=0.84:gimax=0.85:bimax=0.89,eq=saturation=1.12:contrast=1.05,unsharp=5:5:0.6:5:5:0.0</textarea>
+            </div>
+            <div class="form-row-group">
+              <div class="form-row">
+                <label class="field-label" for="f-cap-size">Caption Size</label>
+                <input type="number" id="f-cap-size" value="60" min="20" max="120">
+              </div>
+              <div class="form-row">
+                <label class="field-label" for="f-cap-y">Caption Y</label>
+                <input type="number" id="f-cap-y" value="1300" min="100" max="1800">
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Title card -->
+        <details class="advanced-block">
+          <summary>Title card <span class="optional">(optional)</span></summary>
+          <div class="advanced-inner">
+            <div class="form-row">
+              <label class="field-label" for="f-title-hand">Handwritten line <span class="optional">small text above</span></label>
+              <input type="text" id="f-title-hand" placeholder='e.g. "du får"'>
+            </div>
+            <div class="form-row">
+              <label class="field-label" for="f-title-line1">Impact line 1 <span class="optional">big caps</span></label>
+              <input type="text" id="f-title-line1" placeholder='e.g. "WHAT YOU"' style="text-transform:uppercase">
+            </div>
+            <div class="form-row">
+              <label class="field-label" for="f-title-line2">Impact line 2 <span class="optional">optional</span></label>
+              <input type="text" id="f-title-line2" placeholder='e.g. "WORK FOR"' style="text-transform:uppercase">
+            </div>
+            <div class="form-row">
+              <label class="field-label" for="f-title-dur">Duration (seconds)</label>
+              <input type="number" id="f-title-dur" value="4.5" min="1" max="10" step="0.5">
+            </div>
+          </div>
+        </details>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" id="cancel-modal-btn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="save-client-btn">Save Client</button>
+        </div>
+
+      </form>
+
+      <!-- B-roll Library (outside form, shown after client is saved) -->
+      <div id="broll-section" hidden>
+        <div class="form-section-header">B-roll Library</div>
+        <p class="broll-intro">
+          Drop this client's B-roll clips here. Each one is analyzed on upload, and the AI
+          matches them to the right moments in every video automatically.
+        </p>
+        <div class="broll-drop-zone" id="broll-drop-zone">
+          <input type="file" id="broll-file-input" accept="video/*,.mov,.mp4,.mkv,.avi,.m4v" multiple style="display:none">
+          <span class="broll-drop-label">
+            Click to browse your files, or drag and drop
+          </span>
+        </div>
+        <div class="broll-list" id="broll-list"></div>
+      </div>
+
+      <!-- Style References (analyze clips the client likes, to match their vibe) -->
+      <div id="style-section" hidden>
+        <div class="form-section-header">Style References</div>
+        <p class="broll-intro">
+          Upload 5–10 short clips (2–10s screen-recordings) of videos this client likes.
+          The AI studies them together — captions, colour, pacing, energy — and matches
+          every future edit for this client to that style.
+        </p>
+        <div class="broll-drop-zone" id="style-drop-zone">
+          <input type="file" id="style-file-input" accept="video/*,.mov,.mp4,.mkv,.avi,.m4v" multiple style="display:none">
+          <span class="broll-drop-label">Click to browse, or drop reference clips</span>
+        </div>
+        <div class="broll-list" id="style-list"></div>
+        <div id="style-profile" class="style-profile" hidden></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <!-- AI Chat Widget -->
+  <button class="chat-fab" id="chat-fab" aria-label="AI Assistant">
+    <span class="chat-fab-icon-open">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    </span>
+    <span class="chat-fab-icon-close">
+      <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+      </svg>
+    </span>
+    <span class="chat-fab-badge" id="chat-badge"></span>
+  </button>
+
+  <div class="chat-panel" id="chat-panel">
+    <div class="chat-header">
+      <div class="chat-header-left">
+        <span class="chat-status-dot"></span>
+        <div>
+          <div class="chat-title">AI Assistant</div>
+          <div class="chat-subtitle">Adjusts your client settings</div>
+        </div>
+      </div>
+      <button class="btn-icon" id="close-chat-btn">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+      </button>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-welcome">
+        <div class="chat-welcome-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+        </div>
+        <div>
+          <div class="chat-welcome-title">How can I help?</div>
+          <div class="chat-welcome-body">Describe the issue and I'll update your client settings directly.</div>
+        </div>
+        <div class="chat-welcome-hints">
+          <button class="chat-hint" data-hint="The color is too warm">The color is too warm</button>
+          <button class="chat-hint" data-hint="The saturation is too high">The saturation is too high</button>
+          <button class="chat-hint" data-hint="Make the captions bigger">Make the captions bigger</button>
+        </div>
+      </div>
+    </div>
+    <div class="chat-input-wrap">
+      <textarea class="chat-input" id="chat-input" placeholder="Describe what to change..." rows="1"></textarea>
+      <button class="chat-send-btn" id="chat-send-btn">
+        <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

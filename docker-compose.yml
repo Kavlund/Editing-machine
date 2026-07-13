@@ -1,0 +1,11 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/app/data        # client profiles and job records
+      - ./uploads:/app/uploads  # uploaded footage
+    env_file:
+      - .env
+    restart: unless-stopped

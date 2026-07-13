@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in — Talking Head Editor</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .login-card {
+      width: 100%;
+      max-width: 380px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-xl);
+      padding: 36px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+    }
+    .login-brand {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .login-brand-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .login-title {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    .login-sub {
+      font-size: .8125rem;
+      color: var(--text-muted);
+    }
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .login-error {
+      font-size: .8125rem;
+      color: var(--red);
+      text-align: center;
+      min-height: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="login-brand-row">
+        <span class="brand-dot"></span>
+        <span class="login-title">Talking Head Editor</span>
+      </div>
+      <span class="login-sub">Enter your team password to continue</span>
+    </div>
+
+    <form class="login-form" id="login-form">
+      <div class="form-row">
+        <label class="field-label" for="password">Password</label>
+        <input
+          type="password"
+          id="password"
+          placeholder="••••••••"
+          autocomplete="current-password"
+          required
+          autofocus
+        >
+      </div>
+      <div class="login-error" id="error-msg"></div>
+      <button type="submit" class="btn btn-primary btn-full" id="submit-btn">
+        Sign in
+      </button>
+    </form>
+  </div>
+
+  <script>
+    const form = document.getElementById('login-form');
+    const errorMsg = document.getElementById('error-msg');
+    const submitBtn = document.getElementById('submit-btn');
+
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      errorMsg.textContent = '';
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Signing in...';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: document.getElementById('password').value }),
+        });
+
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          const data = await res.json().catch(() => ({}));
+          errorMsg.textContent = data.detail || 'Invalid password';
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Sign in';
+        }
+      } catch {
+        errorMsg.textContent = 'Could not connect to server';
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Sign in';
+      }
+    });
+  </script>
+</body>
+</html>

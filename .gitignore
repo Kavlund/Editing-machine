@@ -1,0 +1,11 @@
+.env
+backend/.venv/
+data/
+uploads/
+broll_library/
+style_refs/
+test_runs/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
