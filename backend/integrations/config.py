@@ -40,8 +40,18 @@ GDRIVE_FINISHED_FOLDER_ID   = os.environ.get("GDRIVE_FINISHED_FOLDER_ID", "")
 GDRIVE_SHARE_ANYONE         = os.environ.get("GDRIVE_SHARE_ANYONE", "1") == "1"  # link-shareable
 
 
+# ── Slack (finished-video notifications) ──────────────────────────────────────
+# One Incoming Webhook URL. When set, a message is posted to that channel the
+# moment a cut is ready ("<Client> — '<video>' is done"). Inert when unset.
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
+
+
 def notion_configured() -> bool:
     return bool(NOTION_API_KEY and NOTION_CPS_DATABASE_ID)
+
+
+def slack_configured() -> bool:
+    return bool(SLACK_WEBHOOK_URL)
 
 
 def gdrive_configured() -> bool:
@@ -88,5 +98,9 @@ def status() -> dict:
             "share_link": GDRIVE_SHARE_ANYONE,
             "layout": "per_client" if GDRIVE_ROOT_FOLDER_ID else ("flat" if GDRIVE_FINISHED_FOLDER_ID else "unset"),
             "edited_subfolder": GDRIVE_EDITED_SUBFOLDER,
+        },
+        "slack": {
+            "configured": slack_configured(),
+            "missing": [] if slack_configured() else ["SLACK_WEBHOOK_URL"],
         },
     }
