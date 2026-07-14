@@ -92,7 +92,7 @@
     </header>
     <p class="lead">Follow the steps below. As each connection goes live, its light turns <b style="color:#8ff0b6">green</b> automatically. <span class="live"><span class="d"></span>This page checks every few seconds.</span> Nothing here can affect your videos. It only wires up delivery.</p>
 
-    <div class="banner"><b>How to read this:</b> on each step, the <b style="color:#8ff0b6">green</b> tag is your part (you create it in your own account) and the <b style="color:#cfcbff">purple</b> tag is Savas's part (he plugs the values into Railway). You create each connection, hand Savas the values, and watch each light turn green.</div>
+    <div class="banner">You can set all of this up yourself. For each step: create the connection in your own account, then add the values in your <b>Railway → Variables</b>. Each light turns <b style="color:#8ff0b6">green</b> the moment it connects.</div>
 
     <div class="prog">
       <span class="pill" id="p-drive"><span class="dot"></span> Google Drive</span>
@@ -144,23 +144,16 @@
     <div class="step">
       <div class="step-head">
         <div class="num">3</div>
-        <h2>Google Drive: where finished videos land</h2>        <span class="badge" id="b-drive"><span class="d"></span><span class="t">Not connected</span></span>
+        <h2>Google Drive: where finished videos land</h2>
+        <span class="owner you">You do this</span>
+        <span class="badge" id="b-drive"><span class="d"></span><span class="t">Not connected</span></span>
       </div>
       <div class="body">
-        <div class="grp">
-          <div class="grp-label client">You &middot; in your Google account</div>
-          <ol class="do">
-            <li>In Google Cloud, create a <b>service account</b> and download its <b>JSON key</b>. Enable the <b>Google Drive API</b>.</li>
-            <li>In Google Drive, create one <b>root folder</b>. Share it with the service account's email as <b>Editor</b>. Copy the folder ID from the URL.</li>
-            <li>Send Savas the <b>JSON key</b> and the <b>folder ID</b>.</li>
-          </ol>
-        </div>
-        <div class="grp">
-          <div class="grp-label savas">Savas &middot; in Railway</div>
-          <ol class="do">
-            <li>Add the variables <code>GOOGLE_SERVICE_ACCOUNT_JSON</code>, <code>GDRIVE_ROOT_FOLDER_ID</code>, <code>GDRIVE_SHARE_ANYONE=true</code>.</li>
-          </ol>
-        </div>
+        <ol class="do">
+          <li>In Google Cloud, create a <b>service account</b> and download its <b>JSON key</b>. Enable the <b>Google Drive API</b>.</li>
+          <li>In Google Drive, create one <b>root folder</b>. Share it with the service account's email as <b>Editor</b>. Copy the folder ID from the URL.</li>
+          <li>In your <b>Railway → Variables</b>, add: <code>GOOGLE_SERVICE_ACCOUNT_JSON</code>, <code>GDRIVE_ROOT_FOLDER_ID</code>, <code>GDRIVE_SHARE_ANYONE=true</code>.</li>
+        </ol>
       </div>
       <p class="hint">When it connects, adding a client auto-creates their <code>&lt;Client&gt;/Edited/</code> folder.</p>
     </div>
@@ -169,23 +162,16 @@
     <div class="step">
       <div class="step-head">
         <div class="num">4</div>
-        <h2>Notion: link videos to your CPS cards <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>        <span class="badge" id="b-notion"><span class="d"></span><span class="t">Not connected</span></span>
+        <h2>Notion: link videos to your CPS cards <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
+        <span class="owner you">You do this</span>
+        <span class="badge" id="b-notion"><span class="d"></span><span class="t">Not connected</span></span>
       </div>
       <div class="body">
-        <div class="grp">
-          <div class="grp-label client">You &middot; in your Notion</div>
-          <ol class="do">
-            <li>Create a Notion <b>internal integration</b> and copy its <b>token</b>.</li>
-            <li>Share your <b>CPS database</b> with that integration, and copy the <b>database ID</b>.</li>
-            <li>Send Savas the <b>token</b> and the <b>database ID</b>.</li>
-          </ol>
-        </div>
-        <div class="grp">
-          <div class="grp-label savas">Savas &middot; in Railway</div>
-          <ol class="do">
-            <li>Add the variables <code>NOTION_API_KEY</code>, <code>NOTION_CPS_DATABASE_ID</code>, <code>NOTION_DELIVERY_MODE=drive_link</code>.</li>
-          </ol>
-        </div>
+        <ol class="do">
+          <li>Create a Notion <b>internal integration</b> and copy its <b>token</b>.</li>
+          <li>Share your <b>CPS database</b> with that integration, and copy the <b>database ID</b>.</li>
+          <li>In your <b>Railway → Variables</b>, add: <code>NOTION_API_KEY</code>, <code>NOTION_CPS_DATABASE_ID</code>, <code>NOTION_DELIVERY_MODE=drive_link</code>.</li>
+        </ol>
       </div>
     </div>
 
@@ -193,23 +179,16 @@
     <div class="step">
       <div class="step-head">
         <div class="num">5</div>
-        <h2>Slack: get pinged when a cut is ready <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>        <span class="badge" id="b-slack"><span class="d"></span><span class="t">Not connected</span></span>
+        <h2>Slack: get pinged when a cut is ready <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
+        <span class="owner you">You do this</span>
+        <span class="badge" id="b-slack"><span class="d"></span><span class="t">Not connected</span></span>
       </div>
       <div class="body">
-        <div class="grp">
-          <div class="grp-label client">You &middot; in your Slack</div>
-          <ol class="do">
-            <li>At <b>api.slack.com/apps</b>: <b>Create New App → From scratch</b>, pick your workspace.</li>
-            <li>Open <b>Incoming Webhooks → On → Add New Webhook to Workspace</b>, choose a channel, <b>Allow</b>.</li>
-            <li>Copy the <b>webhook URL</b> and send it to Savas.</li>
-          </ol>
-        </div>
-        <div class="grp">
-          <div class="grp-label savas">Savas &middot; in Railway</div>
-          <ol class="do">
-            <li>Add the variable <code>SLACK_WEBHOOK_URL</code>.</li>
-          </ol>
-        </div>
+        <ol class="do">
+          <li>At <b>api.slack.com/apps</b>: <b>Create New App → From scratch</b>, pick your workspace.</li>
+          <li>Open <b>Incoming Webhooks → On → Add New Webhook to Workspace</b>, choose a channel, <b>Allow</b>.</li>
+          <li>Copy the <b>webhook URL</b>. In your <b>Railway → Variables</b>, add <code>SLACK_WEBHOOK_URL</code>.</li>
+        </ol>
       </div>
       <p class="hint">You'll get: <b>"✅ Jordan Blake — 'Morning Routine' is done. Go have a look."</b> with the link.</p>
     </div>
