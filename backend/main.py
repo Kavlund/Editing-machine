@@ -75,7 +75,7 @@ def _is_authenticated(request: Request) -> bool:
     return hmac.compare_digest(cookie, _session_token())
 
 
-_PUBLIC_PATHS = {"/login", "/api/auth/login"}
+_PUBLIC_PATHS = {"/login", "/api/auth/login", "/logo.png", "/logo-original.png", "/favicon.ico"}
 
 
 @app.middleware("http")
