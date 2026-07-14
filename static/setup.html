@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setup — Acquisition Empire Editing Machine</title>
+<style>
+  :root{
+    --bg:#0e1016; --bg2:#141826; --card:rgba(255,255,255,.04); --card-line:rgba(255,255,255,.09);
+    --ink:#f3f4f8; --body:#c3c7d4; --muted:#8b90a2;
+    --indigo:#7c74ff; --indigo-soft:rgba(124,116,255,.16);
+    --green:#43d17f; --green-soft:rgba(67,209,127,.14);
+    --amber:#f0b73f;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:var(--sans);color:var(--body);background:var(--bg);
+    background-image:radial-gradient(1100px 600px at 15% -5%,rgba(124,116,255,.18),transparent 60%),
+                     radial-gradient(900px 500px at 100% 0%,rgba(67,209,127,.10),transparent 55%);
+    min-height:100vh;font-size:15px;line-height:1.55;}
+  .wrap{max-width:760px;margin:0 auto;padding:38px 22px 70px;}
+  header{display:flex;align-items:center;gap:14px;margin-bottom:6px;}
+  header img{width:44px;height:44px;object-fit:contain;}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--indigo);margin:0 0 3px;}
+  h1{font-size:26px;color:#fff;margin:0;font-weight:700;letter-spacing:-.01em;}
+  .lead{color:var(--body);margin:14px 0 26px;font-size:15px;}
+  .lead b{color:#fff;}
+
+  .prog{display:flex;align-items:center;gap:8px;margin:0 0 26px;flex-wrap:wrap;}
+  .pill{font-size:12px;color:var(--muted);background:var(--card);border:1px solid var(--card-line);
+    padding:5px 11px;border-radius:999px;display:flex;align-items:center;gap:7px;}
+  .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:.4s;}
+  .pill.on{color:#eafaf0;border-color:rgba(67,209,127,.4);background:var(--green-soft);}
+  .pill.on .dot{background:var(--green);box-shadow:0 0 0 4px var(--green-soft);}
+
+  .step{background:var(--card);border:1px solid var(--card-line);border-radius:16px;padding:20px 22px;margin-bottom:16px;
+    backdrop-filter:blur(8px);}
+  .step-head{display:flex;align-items:center;gap:13px;}
+  .num{width:30px;height:30px;flex-shrink:0;border-radius:9px;background:var(--indigo-soft);color:#cfcbff;
+    font-family:var(--mono);font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;}
+  .step h2{font-size:17px;color:#fff;margin:0;font-weight:650;flex:1;}
+  .badge{font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;
+    padding:5px 11px;border-radius:999px;display:flex;align-items:center;gap:7px;white-space:nowrap;
+    background:rgba(255,255,255,.05);color:var(--muted);border:1px solid var(--card-line);transition:.35s;}
+  .badge .d{width:8px;height:8px;border-radius:50%;background:var(--muted);transition:.35s;}
+  .badge.on{background:var(--green-soft);color:#8ff0b6;border-color:rgba(67,209,127,.45);}
+  .badge.on .d{background:var(--green);box-shadow:0 0 0 4px var(--green-soft);}
+  .badge.wait .d{background:var(--amber);animation:pulse 1.3s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .body{margin-top:14px;padding-left:43px;}
+  ol.do{margin:0;padding:0;list-style:none;counter-reset:d;}
+  ol.do li{counter-increment:d;position:relative;padding:6px 0 6px 24px;font-size:14px;color:var(--body);}
+  ol.do li::before{content:counter(d);position:absolute;left:0;top:6px;color:var(--indigo);font-family:var(--mono);font-size:12px;font-weight:700;}
+  b{color:#fff;font-weight:600;}
+  code{font-family:var(--mono);font-size:.85em;background:rgba(255,255,255,.07);border:1px solid var(--card-line);
+    padding:2px 7px;border-radius:6px;color:#e7e9f2;}
+  .copy{cursor:pointer;border:none;background:var(--indigo-soft);color:#cfcbff;font-family:var(--mono);font-size:12px;
+    padding:3px 9px;border-radius:6px;margin-left:6px;transition:.2s;}
+  .copy:hover{background:rgba(124,116,255,.3);}
+  .copy.done{background:var(--green-soft);color:#8ff0b6;}
+  .manual{display:flex;align-items:center;gap:11px;margin-top:14px;padding-left:43px;}
+  .manual input{width:19px;height:19px;accent-color:var(--green);cursor:pointer;}
+  .manual label{font-size:14px;color:var(--body);cursor:pointer;user-select:none;}
+  .hint{color:var(--muted);font-size:12.5px;margin-top:9px;padding-left:43px;}
+  .foot{text-align:center;color:var(--muted);font-size:12.5px;margin-top:30px;}
+  .live{display:inline-flex;align-items:center;gap:7px;}
+  .live .d{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.6s infinite;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <img src="/logo.png" alt="">
+      <div>
+        <p class="eyebrow">Setup &middot; One-time</p>
+        <h1>Connect your Editing Machine</h1>
+      </div>
+    </header>
+    <p class="lead">Follow the steps below. As each connection goes live, its light turns <b style="color:#8ff0b6">green</b> automatically. <span class="live"><span class="d"></span>This page checks every few seconds.</span> Nothing here can affect your videos. It only wires up delivery.</p>
+
+    <div class="prog">
+      <span class="pill" id="p-drive"><span class="dot"></span> Google Drive</span>
+      <span class="pill" id="p-notion"><span class="dot"></span> Notion</span>
+      <span class="pill" id="p-slack"><span class="dot"></span> Slack</span>
+    </div>
+
+    <!-- 1 GitHub -->
+    <div class="step">
+      <div class="step-head">
+        <div class="num">1</div>
+        <h2>Give your editor access (GitHub)</h2>
+      </div>
+      <div class="body">
+        <ol class="do">
+          <li>Open your repository on <b>github.com</b>.</li>
+          <li>Go to <b>Settings → Collaborators → Add people</b>.</li>
+          <li>Add <code>savas-web</code> and set the role to <b>Admin</b>.</li>
+        </ol>
+      </div>
+      <div class="manual">
+        <input type="checkbox" id="c-github">
+        <label for="c-github">Done — editor added on GitHub</label>
+      </div>
+    </div>
+
+    <!-- 2 Railway -->
+    <div class="step">
+      <div class="step-head">
+        <div class="num">2</div>
+        <h2>Give your editor access (Railway)</h2>
+      </div>
+      <div class="body">
+        <ol class="do">
+          <li>Open your project on <b>railway.app</b>.</li>
+          <li>Go to <b>Settings → Members → Invite</b>.</li>
+          <li>Invite your editor's email as a <b>Member</b>.</li>
+        </ol>
+      </div>
+      <div class="manual">
+        <input type="checkbox" id="c-railway">
+        <label for="c-railway">Done — editor added on Railway</label>
+      </div>
+    </div>
+
+    <!-- 3 Google Drive -->
+    <div class="step">
+      <div class="step-head">
+        <div class="num">3</div>
+        <h2>Google Drive: where finished videos land</h2>
+        <span class="badge" id="b-drive"><span class="d"></span><span class="t">Not connected</span></span>
+      </div>
+      <div class="body">
+        <ol class="do">
+          <li>In Google Cloud, create a <b>service account</b> and download its <b>JSON key</b>. Enable the <b>Google Drive API</b>.</li>
+          <li>In Google Drive, create one <b>root folder</b>. Share it with the service account's email as <b>Editor</b>. Copy the folder ID from the URL.</li>
+          <li>In Railway → Variables, add: <code>GOOGLE_SERVICE_ACCOUNT_JSON</code>, <code>GDRIVE_ROOT_FOLDER_ID</code>, <code>GDRIVE_SHARE_ANYONE=true</code>.</li>
+        </ol>
+      </div>
+      <p class="hint">When it connects, adding a client auto-creates their <code>&lt;Client&gt;/Edited/</code> folder.</p>
+    </div>
+
+    <!-- 4 Notion -->
+    <div class="step">
+      <div class="step-head">
+        <div class="num">4</div>
+        <h2>Notion: link videos to your CPS cards <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
+        <span class="badge" id="b-notion"><span class="d"></span><span class="t">Not connected</span></span>
+      </div>
+      <div class="body">
+        <ol class="do">
+          <li>Create a Notion <b>internal integration</b> and copy its token.</li>
+          <li>Share your <b>CPS database</b> with that integration.</li>
+          <li>In Railway → Variables, add: <code>NOTION_API_KEY</code>, <code>NOTION_CPS_DATABASE_ID</code>, <code>NOTION_DELIVERY_MODE=drive_link</code>.</li>
+        </ol>
+      </div>
+    </div>
+
+    <!-- 5 Slack -->
+    <div class="step">
+      <div class="step-head">
+        <div class="num">5</div>
+        <h2>Slack: get pinged when a cut is ready <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
+        <span class="badge" id="b-slack"><span class="d"></span><span class="t">Not connected</span></span>
+      </div>
+      <div class="body">
+        <ol class="do">
+          <li>At <b>api.slack.com/apps</b>: <b>Create New App → From scratch</b>, pick your workspace.</li>
+          <li>Open <b>Incoming Webhooks → On → Add New Webhook to Workspace</b>, choose a channel, <b>Allow</b>.</li>
+          <li>Copy the webhook URL. In Railway → Variables, add <code>SLACK_WEBHOOK_URL</code><button class="copy" data-copy="SLACK_WEBHOOK_URL">copy name</button>.</li>
+        </ol>
+      </div>
+      <p class="hint">You'll get: <b>"✅ Jordan Blake — 'Morning Routine' is done. Go have a look."</b> with the link.</p>
+    </div>
+
+    <p class="foot" id="foot">Checking connections…</p>
+  </div>
+
+<script>
+  // Persist the two manual checkboxes locally
+  ["c-github","c-railway"].forEach(function(id){
+    var el=document.getElementById(id);
+    el.checked = localStorage.getItem(id)==="1";
+    el.addEventListener("change",function(){ localStorage.setItem(id, el.checked?"1":"0"); paint(window._last||{}); });
+  });
+
+  // Copy-name buttons
+  document.querySelectorAll(".copy").forEach(function(btn){
+    btn.addEventListener("click",function(){
+      navigator.clipboard.writeText(btn.dataset.copy).then(function(){
+        var t=btn.textContent; btn.textContent="copied ✓"; btn.classList.add("done");
+        setTimeout(function(){ btn.textContent=t; btn.classList.remove("done"); },1400);
+      });
+    });
+  });
+
+  function setBadge(id, on){
+    var b=document.getElementById(id); if(!b) return;
+    b.classList.toggle("on", on); b.classList.toggle("wait", !on);
+    b.querySelector(".t").textContent = on ? "Connected" : "Waiting…";
+  }
+  function setPill(id, on){
+    var p=document.getElementById(id); if(!p) return;
+    p.classList.toggle("on", on);
+  }
+  function paint(s){
+    var drive = !!(s.google_drive && s.google_drive.configured);
+    var notion= !!(s.notion && s.notion.configured);
+    var slack = !!(s.slack && s.slack.configured);
+    setBadge("b-drive",drive);  setPill("p-drive",drive);
+    setBadge("b-notion",notion);setPill("p-notion",notion);
+    setBadge("b-slack",slack);  setPill("p-slack",slack);
+    var gh=document.getElementById("c-github").checked, rw=document.getElementById("c-railway").checked;
+    var all = drive && gh && rw;
+    document.getElementById("foot").innerHTML = all
+      ? "✅ Core setup complete. You're live."
+      : "Live status. Updates automatically as you connect each service.";
+  }
+  async function poll(){
+    try{
+      var r=await fetch("/api/integrations/status",{cache:"no-store"});
+      var s=await r.json(); window._last=s; paint(s);
+    }catch(e){ /* keep last state */ }
+  }
+  poll(); setInterval(poll, 3500);
+</script>
+</body>
+</html>
