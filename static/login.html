@@ -33,13 +33,20 @@
     .login-sub{font-size:.85rem;color:var(--muted);}
     .login-form{display:flex;flex-direction:column;gap:15px;}
     .field-label{font-size:.8rem;color:var(--body);margin-bottom:7px;display:block;font-weight:500;}
-    input[type=password]{
+    .pw-wrap{position:relative;}
+    #password{
       width:100%;background:rgba(255,255,255,.05);border:1px solid var(--card-line);
-      border-radius:11px;padding:13px 15px;color:var(--ink);font-size:.95rem;font-family:var(--sans);
+      border-radius:11px;padding:13px 46px 13px 15px;color:var(--ink);font-size:.95rem;font-family:var(--sans);
       transition:.2s;outline:none;
     }
-    input[type=password]::placeholder{color:var(--muted);}
-    input[type=password]:focus{border-color:var(--indigo);box-shadow:0 0 0 3px var(--indigo-soft);background:rgba(255,255,255,.07);}
+    #password::placeholder{color:var(--muted);}
+    #password:focus{border-color:var(--indigo);box-shadow:0 0 0 3px var(--indigo-soft);background:rgba(255,255,255,.07);}
+    .pw-toggle{
+      position:absolute;right:6px;top:50%;transform:translateY(-50%);
+      background:none;border:none;cursor:pointer;color:var(--muted);
+      padding:8px;border-radius:8px;display:flex;align-items:center;transition:.2s;
+    }
+    .pw-toggle:hover{color:var(--ink);background:rgba(255,255,255,.07);}
     .login-error{font-size:.8rem;color:var(--red);text-align:center;min-height:18px;}
     .btn-signin{
       width:100%;border:none;cursor:pointer;background:var(--indigo);color:#fff;
@@ -64,14 +71,20 @@
     <form class="login-form" id="login-form">
       <div>
         <label class="field-label" for="password">Password</label>
-        <input
-          type="password"
-          id="password"
-          placeholder="••••••••"
-          autocomplete="current-password"
-          required
-          autofocus
-        >
+        <div class="pw-wrap">
+          <input
+            type="password"
+            id="password"
+            placeholder="••••••••"
+            autocomplete="current-password"
+            required
+            autofocus
+          >
+          <button type="button" class="pw-toggle" id="pw-toggle" aria-label="Show password">
+            <svg id="eye-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg id="eye-closed" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-10-8-10-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
+        </div>
       </div>
       <div class="login-error" id="error-msg"></div>
       <button type="submit" class="btn-signin" id="submit-btn">
@@ -84,6 +97,20 @@
     const form = document.getElementById('login-form');
     const errorMsg = document.getElementById('error-msg');
     const submitBtn = document.getElementById('submit-btn');
+
+    // Show / hide password
+    const pwInput = document.getElementById('password');
+    const pwToggle = document.getElementById('pw-toggle');
+    const eyeOpen = document.getElementById('eye-open');
+    const eyeClosed = document.getElementById('eye-closed');
+    pwToggle.addEventListener('click', () => {
+      const reveal = pwInput.type === 'password';
+      pwInput.type = reveal ? 'text' : 'password';
+      eyeOpen.style.display = reveal ? 'none' : '';
+      eyeClosed.style.display = reveal ? '' : 'none';
+      pwToggle.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+      pwInput.focus();
+    });
 
     form.addEventListener('submit', async e => {
       e.preventDefault();
