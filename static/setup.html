@@ -67,6 +67,11 @@
   .foot{text-align:center;color:var(--muted);font-size:12.5px;margin-top:30px;}
   .live{display:inline-flex;align-items:center;gap:7px;}
   .live .d{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.6s infinite;}
+  .banner{background:var(--indigo-soft);border:1px solid rgba(124,116,255,.32);border-radius:13px;padding:14px 17px;margin:0 0 22px;font-size:14.5px;color:#e0ddff;line-height:1.5;}
+  .banner b{color:#fff;}
+  .owner{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:7px;white-space:nowrap;}
+  .owner.you{background:var(--green-soft);color:#8ff0b6;border:1px solid rgba(67,209,127,.35);}
+  .owner.editor{background:rgba(255,255,255,.05);color:var(--muted);border:1px solid var(--card-line);}
 </style>
 </head>
 <body>
@@ -81,6 +86,8 @@
     </header>
     <p class="lead">Follow the steps below. As each connection goes live, its light turns <b style="color:#8ff0b6">green</b> automatically. <span class="live"><span class="d"></span>This page checks every few seconds.</span> Nothing here can affect your videos. It only wires up delivery.</p>
 
+    <div class="banner">You only do <b>steps 1 and 2</b> (giving your editor access). Your editor sets up <b>3, 4 and 5</b> for you while you watch each light turn green. That's it.</div>
+
     <div class="prog">
       <span class="pill" id="p-drive"><span class="dot"></span> Google Drive</span>
       <span class="pill" id="p-notion"><span class="dot"></span> Notion</span>
@@ -92,6 +99,7 @@
       <div class="step-head">
         <div class="num">1</div>
         <h2>Give your editor access (GitHub)</h2>
+        <span class="owner you">You do this</span>
       </div>
       <div class="body">
         <ol class="do">
@@ -111,6 +119,7 @@
       <div class="step-head">
         <div class="num">2</div>
         <h2>Give your editor access (Railway)</h2>
+        <span class="owner you">You do this</span>
       </div>
       <div class="body">
         <ol class="do">
@@ -130,6 +139,7 @@
       <div class="step-head">
         <div class="num">3</div>
         <h2>Google Drive: where finished videos land</h2>
+        <span class="owner editor">Your editor</span>
         <span class="badge" id="b-drive"><span class="d"></span><span class="t">Not connected</span></span>
       </div>
       <div class="body">
@@ -147,6 +157,7 @@
       <div class="step-head">
         <div class="num">4</div>
         <h2>Notion: link videos to your CPS cards <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
+        <span class="owner editor">Your editor</span>
         <span class="badge" id="b-notion"><span class="d"></span><span class="t">Not connected</span></span>
       </div>
       <div class="body">
@@ -163,6 +174,7 @@
       <div class="step-head">
         <div class="num">5</div>
         <h2>Slack: get pinged when a cut is ready <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
+        <span class="owner editor">Your editor</span>
         <span class="badge" id="b-slack"><span class="d"></span><span class="t">Not connected</span></span>
       </div>
       <div class="body">
