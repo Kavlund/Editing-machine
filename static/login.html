@@ -3,69 +3,66 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign in — Talking Head Editor</title>
-  <link rel="stylesheet" href="/style.css">
+  <title>Sign in · Acquisition Empire Editing Machine</title>
   <style>
-    body {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
+    :root{
+      --bg:#0e1016; --card:rgba(255,255,255,.045); --card-line:rgba(255,255,255,.10);
+      --ink:#f3f4f8; --body:#c3c7d4; --muted:#8b90a2;
+      --indigo:#7c74ff; --indigo-soft:rgba(124,116,255,.16);
+      --red:#ff7a6b;
+      --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+      --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
     }
-    .login-card {
-      width: 100%;
-      max-width: 380px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--r-xl);
-      padding: 36px 32px;
-      display: flex;
-      flex-direction: column;
-      gap: 28px;
+    *{box-sizing:border-box;}
+    body{
+      margin:0;font-family:var(--sans);color:var(--body);background:var(--bg);
+      background-image:radial-gradient(1100px 600px at 15% -5%,rgba(124,116,255,.20),transparent 60%),
+                       radial-gradient(900px 500px at 100% 0%,rgba(67,209,127,.10),transparent 55%);
+      min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
     }
-    .login-brand {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
+    .login-card{
+      width:100%;max-width:400px;background:var(--card);border:1px solid var(--card-line);
+      border-radius:20px;padding:38px 34px;backdrop-filter:blur(10px);
+      box-shadow:0 30px 80px -30px rgba(0,0,0,.6);
+      display:flex;flex-direction:column;gap:26px;
     }
-    .login-brand-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
+    .login-brand{display:flex;flex-direction:column;align-items:center;text-align:center;gap:13px;}
+    .login-brand img{width:56px;height:56px;object-fit:contain;}
+    .login-eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--indigo);}
+    .login-title{font-size:1.35rem;font-weight:700;color:var(--ink);letter-spacing:-.01em;line-height:1.15;}
+    .login-sub{font-size:.85rem;color:var(--muted);}
+    .login-form{display:flex;flex-direction:column;gap:15px;}
+    .field-label{font-size:.8rem;color:var(--body);margin-bottom:7px;display:block;font-weight:500;}
+    input[type=password]{
+      width:100%;background:rgba(255,255,255,.05);border:1px solid var(--card-line);
+      border-radius:11px;padding:13px 15px;color:var(--ink);font-size:.95rem;font-family:var(--sans);
+      transition:.2s;outline:none;
     }
-    .login-title {
-      font-size: 1rem;
-      font-weight: 600;
+    input[type=password]::placeholder{color:var(--muted);}
+    input[type=password]:focus{border-color:var(--indigo);box-shadow:0 0 0 3px var(--indigo-soft);background:rgba(255,255,255,.07);}
+    .login-error{font-size:.8rem;color:var(--red);text-align:center;min-height:18px;}
+    .btn-signin{
+      width:100%;border:none;cursor:pointer;background:var(--indigo);color:#fff;
+      font-size:.95rem;font-weight:600;font-family:var(--sans);padding:13px;border-radius:11px;
+      transition:.2s;
     }
-    .login-sub {
-      font-size: .8125rem;
-      color: var(--text-muted);
-    }
-    .login-form {
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-    .login-error {
-      font-size: .8125rem;
-      color: var(--red);
-      text-align: center;
-      min-height: 20px;
-    }
+    .btn-signin:hover{background:#8b83ff;box-shadow:0 8px 24px -8px rgba(124,116,255,.7);}
+    .btn-signin:disabled{opacity:.6;cursor:default;box-shadow:none;}
   </style>
 </head>
 <body>
   <div class="login-card">
     <div class="login-brand">
-      <div class="login-brand-row">
-        <span class="brand-dot"></span>
-        <span class="login-title">Talking Head Editor</span>
+      <img src="/logo.png" alt="Acquisition Empire">
+      <div>
+        <div class="login-eyebrow">Acquisition Empire</div>
+        <div class="login-title">Editing Machine</div>
       </div>
-      <span class="login-sub">Enter your team password to continue</span>
+      <span class="login-sub">Enter your password to continue</span>
     </div>
 
     <form class="login-form" id="login-form">
-      <div class="form-row">
+      <div>
         <label class="field-label" for="password">Password</label>
         <input
           type="password"
@@ -77,7 +74,7 @@
         >
       </div>
       <div class="login-error" id="error-msg"></div>
-      <button type="submit" class="btn btn-primary btn-full" id="submit-btn">
+      <button type="submit" class="btn-signin" id="submit-btn">
         Sign in
       </button>
     </form>
