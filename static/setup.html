@@ -100,50 +100,10 @@
       <span class="pill" id="p-slack"><span class="dot"></span> Slack</span>
     </div>
 
-    <!-- 1 GitHub -->
+    <!-- 1 Google Drive -->
     <div class="step">
       <div class="step-head">
         <div class="num">1</div>
-        <h2>Give Savas access (GitHub)</h2>
-        <span class="owner you">You do this</span>
-      </div>
-      <div class="body">
-        <ol class="do">
-          <li>Open your repository on <b>github.com</b>.</li>
-          <li>Go to <b>Settings → Collaborators → Add people</b>.</li>
-          <li>Add <code>savas-web</code> and set the role to <b>Admin</b>.</li>
-        </ol>
-      </div>
-      <div class="manual">
-        <input type="checkbox" id="c-github">
-        <label for="c-github">Done. Savas added on GitHub</label>
-      </div>
-    </div>
-
-    <!-- 2 Railway -->
-    <div class="step">
-      <div class="step-head">
-        <div class="num">2</div>
-        <h2>Give Savas access (Railway)</h2>
-        <span class="owner you">You do this</span>
-      </div>
-      <div class="body">
-        <ol class="do">
-          <li>Open your project on <b>railway.app</b>.</li>
-          <li>Go to <b>Settings → Members → Invite</b>.</li>
-          <li>Invite Savas's email as a <b>Member</b>.</li>
-        </ol>
-      </div>
-      <div class="manual">
-        <input type="checkbox" id="c-railway">
-        <label for="c-railway">Done. Savas added on Railway</label>
-      </div>
-    </div>
-
-    <!-- 3 Google Drive -->
-    <div class="step">
-      <div class="step-head">
-        <div class="num">3</div>
         <h2>Google Drive: where finished videos land</h2>
         <span class="owner you">You do this</span>
         <span class="badge" id="b-drive"><span class="d"></span><span class="t">Not connected</span></span>
@@ -158,10 +118,10 @@
       <p class="hint">When it connects, adding a client auto-creates their <code>&lt;Client&gt;/Edited/</code> folder.</p>
     </div>
 
-    <!-- 4 Notion -->
+    <!-- 2 Notion -->
     <div class="step">
       <div class="step-head">
-        <div class="num">4</div>
+        <div class="num">2</div>
         <h2>Notion: link videos to your CPS cards <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
         <span class="owner you">You do this</span>
         <span class="badge" id="b-notion"><span class="d"></span><span class="t">Not connected</span></span>
@@ -175,10 +135,10 @@
       </div>
     </div>
 
-    <!-- 5 Slack -->
+    <!-- 3 Slack -->
     <div class="step">
       <div class="step-head">
-        <div class="num">5</div>
+        <div class="num">3</div>
         <h2>Slack: get pinged when a cut is ready <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
         <span class="owner you">You do this</span>
         <span class="badge" id="b-slack"><span class="d"></span><span class="t">Not connected</span></span>
@@ -197,13 +157,6 @@
   </div>
 
 <script>
-  // Persist the two manual checkboxes locally
-  ["c-github","c-railway"].forEach(function(id){
-    var el=document.getElementById(id);
-    el.checked = localStorage.getItem(id)==="1";
-    el.addEventListener("change",function(){ localStorage.setItem(id, el.checked?"1":"0"); paint(window._last||{}); });
-  });
-
   // Copy-name buttons
   document.querySelectorAll(".copy").forEach(function(btn){
     btn.addEventListener("click",function(){
@@ -230,10 +183,8 @@
     setBadge("b-drive",drive);  setPill("p-drive",drive);
     setBadge("b-notion",notion);setPill("p-notion",notion);
     setBadge("b-slack",slack);  setPill("p-slack",slack);
-    var gh=document.getElementById("c-github").checked, rw=document.getElementById("c-railway").checked;
-    var all = drive && gh && rw;
-    document.getElementById("foot").innerHTML = all
-      ? "✅ Core setup complete. You're live."
+    document.getElementById("foot").innerHTML = drive
+      ? "✅ Google Drive connected. Finished videos will be delivered automatically."
       : "Live status. Updates automatically as you connect each service.";
   }
   async function poll(){
