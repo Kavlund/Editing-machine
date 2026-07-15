@@ -1,10 +1,15 @@
 FROM python:3.12-slim
 
-# ffmpeg for video processing, curl for font downloads
+# Default timezone (Denmark). Overridable via a TZ env var on the host.
+# tzdata (installed below) provides the zone database so named zones resolve.
+ENV TZ=Europe/Copenhagen
+
+# ffmpeg for video processing, curl for font downloads, tzdata for local time
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         curl \
+        tzdata \
         fonts-liberation \
         fonts-freefont-ttf && \
     rm -rf /var/lib/apt/lists/*
