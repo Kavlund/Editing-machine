@@ -1180,22 +1180,9 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         except Exception as _e:
             _log(job_path, f"Delivery: skipped ({_e})")
 
-        # ── 9. Clean up render intermediates (keep source, transcript, edl, final) ──
-        # These are all regenerated on a re-render, so deleting them is safe and
-        # stops working files from piling up on disk.
-        try:
-            for f in ("base30.mkv", "base30_zoom.mkv", "composited30.mkv",
-                      "_seg_offsets.json", "_concat30.txt"):
-                p = project_dir / f
-                if p.exists():
-                    p.unlink()
-            for d in ("clips30", "animations"):
-                dp = project_dir / d
-                if dp.is_dir():
-                    shutil.rmtree(dp, ignore_errors=True)
-            _log(job_path, "Cleaned up temporary render files")
-        except Exception:
-            pass
+        # ── 9. Render intermediates are cleaned in the `finally` below, so cleanup
+        #      runs on success AND on failure. A failed render must never leave its
+        #      working files behind — that is what filled the volume.
 
     except Exception as exc:
         msg = str(exc)
@@ -1212,3 +1199,21 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         client_name = job.get("client_name", "Unknown client")
         folder      = job.get("folder_name", job_id)
         _slack(f":x: *{client_name}* — `{folder}` failed: {str(exc)[:200]}")
+
+    finally:
+        # Always remove the heavy render intermediates — success, failure, or
+        # cancel — so working files never pile up on the volume. All are rebuilt
+        # on a re-render, so deleting them is safe. Guarded because project_dir
+        # may not exist yet if the job failed very early.
+        try:
+            for f in ("base30.mkv", "base30_zoom.mkv", "composited30.mkv",
+                      "_seg_offsets.json", "_concat30.txt"):
+                p = project_dir / f
+                if p.exists():
+                    p.unlink()
+            for d in ("clips30", "animations"):
+                dp = project_dir / d
+                if dp.is_dir():
+                    shutil.rmtree(dp, ignore_errors=True)
+        except Exception:
+            pass

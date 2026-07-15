@@ -1,4 +1,4 @@
-import os, sys, json, uuid, hmac, hashlib, secrets, threading, asyncio, base64, re
+import os, sys, json, uuid, hmac, hashlib, secrets, threading, asyncio, base64, re, shutil
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -50,6 +50,42 @@ if not CLIENTS_FILE.exists():
     CLIENTS_FILE.write_text("[]")
 
 
+def _sweep_render_debris():
+    """Delete regenerable render intermediates left in job folders by past runs —
+    especially failed ones, which used to skip cleanup and piled up on the volume.
+    Safe: every one of these is rebuilt on a re-render. Frees disk on boot."""
+    files = ("base30.mkv", "base30_zoom.mkv", "composited30.mkv",
+             "_seg_offsets.json", "_concat30.txt")
+    dirs  = ("clips30", "animations")
+    freed = 0
+    if not UPLOADS_DIR.exists():
+        return
+    for job_dir in UPLOADS_DIR.iterdir():
+        if not job_dir.is_dir():
+            continue
+        for name in files:
+            p = job_dir / name
+            try:
+                if p.exists():
+                    freed += p.stat().st_size
+                    p.unlink()
+            except Exception:
+                pass
+        for name in dirs:
+            dp = job_dir / name
+            try:
+                if dp.is_dir():
+                    for sub in dp.rglob("*"):
+                        if sub.is_file():
+                            try: freed += sub.stat().st_size
+                            except Exception: pass
+                    shutil.rmtree(dp, ignore_errors=True)
+            except Exception:
+                pass
+    if freed:
+        print(f"[startup] swept {freed/1024/1024:.0f} MB of old render intermediates from the volume", flush=True)
+
+
 @app.on_event("startup")
 async def recover_stuck_jobs():
     """On startup, reset any jobs that were mid-pipeline — the thread is dead, they'd be stuck forever."""
@@ -65,6 +101,10 @@ async def recover_stuck_jobs():
                 f.write_text(json.dumps(job, indent=2))
         except Exception:
             pass
+    try:
+        _sweep_render_debris()
+    except Exception as e:
+        print(f"[startup] debris sweep skipped: {e}", flush=True)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────
