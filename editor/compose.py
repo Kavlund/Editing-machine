@@ -25,9 +25,17 @@ FPS = 30
 
 
 def run(cmd, quiet=True):
-    subprocess.run(cmd, check=True,
-                   stdout=subprocess.DEVNULL if quiet else None,
-                   stderr=subprocess.PIPE)
+    try:
+        subprocess.run(cmd, check=True,
+                       stdout=subprocess.DEVNULL if quiet else None,
+                       stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as e:
+        # Surface ffmpeg's own error instead of swallowing it, so a failed render
+        # shows WHY (missing stream, bad overlay input, etc.) not just an exit code.
+        err = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, (bytes, bytearray)) else (e.stderr or "")
+        sys.stderr.write("FFMPEG ERROR (exit %s): %s\n" % (e.returncode, err.strip()[-1500:]))
+        sys.stderr.flush()
+        raise
 
 def probe_dur(path) -> float:
     out = subprocess.run(["ffprobe","-v","error","-show_entries","format=duration",

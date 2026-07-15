@@ -726,13 +726,6 @@ function getFriendlyError(log) {
   if (!errors.length) return null;
   const msg = errors[errors.length - 1].msg;
 
-  if (/captions\.mov|animations[/\\]|exit status 234/i.test(msg)) {
-    return {
-      title:  'Internal file conflict',
-      detail: 'The pipeline accidentally tried to process an overlay file as source footage.',
-      fix:    'This has been fixed. Click Retry — it will not happen again.',
-    };
-  }
   if (/No video files found/i.test(msg)) {
     return {
       title:  'No footage found',
@@ -754,11 +747,11 @@ function getFriendlyError(log) {
       fix:    'Open the client profile and check the Speaker setting. For solo footage set it to speaker_0.',
     };
   }
-  if (/compose\.py|ffmpeg/i.test(msg)) {
+  if (/compose\.py|ffmpeg|FFMPEG ERROR/i.test(msg)) {
     return {
       title:  'Render failed',
-      detail: 'ffmpeg ran into an error while compositing the final video.',
-      fix:    'Check that the footage is not corrupt. Try re-uploading the original clip.',
+      detail: 'ffmpeg hit an error while compositing the final video (overlays or captions).',
+      fix:    'Open Technical details below for the exact ffmpeg error (the line starting "FFMPEG ERROR") and send it to Savas. If it was a one-off, a re-render may clear it.',
     };
   }
   if (/normalize|_v30/i.test(msg)) {
