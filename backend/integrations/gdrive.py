@@ -42,14 +42,16 @@ def _find_or_create_folder(svc, name: str, parent_id: str) -> str:
     q = (f"name = '{safe}' and '{parent_id}' in parents and "
          f"mimeType = 'application/vnd.google-apps.folder' and trashed = false")
     res = svc.files().list(q=q, spaces="drive", fields="files(id, name)",
-                           pageSize=1).execute()
+                           pageSize=1,
+                           supportsAllDrives=True,
+                           includeItemsFromAllDrives=True).execute()
     hits = res.get("files", [])
     if hits:
         return hits[0]["id"]
     created = svc.files().create(
         body={"name": name, "mimeType": "application/vnd.google-apps.folder",
               "parents": [parent_id]},
-        fields="id").execute()
+        fields="id", supportsAllDrives=True).execute()
     return created["id"]
 
 
@@ -120,7 +122,8 @@ def upload_video(local_path: Path, display_name: str, client_name: str = "",
         meta = {"name": filename, "parents": [target_folder]}
         media = MediaFileUpload(str(local_path), mimetype="video/mp4", resumable=True)
         created = svc.files().create(body=meta, media_body=media,
-                                     fields="id, webViewLink").execute()
+                                     fields="id, webViewLink",
+                                     supportsAllDrives=True).execute()
         file_id = created["id"]
 
         if config.GDRIVE_SHARE_ANYONE:
@@ -129,6 +132,7 @@ def upload_video(local_path: Path, display_name: str, client_name: str = "",
                     fileId=file_id,
                     body={"role": "reader", "type": "anyone"},
                     fields="id",
+                    supportsAllDrives=True,
                 ).execute()
             except Exception as e:
                 log(f"gdrive: could not set link-sharing ({e}) — file uploaded but private")
