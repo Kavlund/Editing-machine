@@ -100,6 +100,19 @@
       <span class="pill" id="p-slack"><span class="dot"></span> Slack</span>
     </div>
 
+    <!-- Storage / maintenance -->
+    <div class="step" id="storage-panel" style="display:none;">
+      <div class="step-head">
+        <div class="num">✓</div>
+        <h2>Storage <span id="storage-free" style="color:var(--muted);font-weight:400;font-size:13px;"></span></h2>
+      </div>
+      <div class="body">
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Free space on the render volume. If it ever fills up and a render fails, clear the safe render leftovers here. This <b>never</b> deletes uploaded footage or finished videos.</p>
+        <button id="free-space-btn" style="display:inline-flex;align-items:center;gap:8px;background:var(--green);color:#04140b;font-weight:650;font-size:14px;border:none;cursor:pointer;padding:11px 18px;border-radius:11px;">Free up space</button>
+        <p id="free-space-note" style="margin:10px 0 0;font-size:12.5px;color:var(--muted);"></p>
+      </div>
+    </div>
+
     <!-- 1 Google Drive -->
     <div class="step">
       <div class="step-head">
@@ -244,6 +257,36 @@
         var det = connectBtn.closest(".body").querySelector("details");
         if(det){ det.open = true; }
       }
+    });
+  })();
+
+  // ── Storage / free up space ───────────────────────────────────────────
+  (function(){
+    var panel = document.getElementById("storage-panel");
+    var freeEl = document.getElementById("storage-free");
+    var btn = document.getElementById("free-space-btn");
+    var note = document.getElementById("free-space-note");
+    function loadStorage(){
+      fetch("/api/admin/storage",{cache:"no-store"})
+        .then(function(r){ return r.json(); })
+        .then(function(s){
+          if(s && s.free_gb != null){
+            panel.style.display = "";
+            freeEl.textContent = "— " + s.free_gb + " GB free of " + s.total_gb + " GB";
+          }
+        }).catch(function(){});
+    }
+    loadStorage();
+    btn.addEventListener("click", function(){
+      if(!confirm("Free up space now? This removes only regenerable render leftovers. Uploaded footage and finished videos are kept.")) return;
+      btn.disabled = true; note.style.color = "var(--muted)"; note.textContent = "Working…";
+      fetch("/api/admin/free-space",{method:"POST"})
+        .then(function(r){ return r.json(); })
+        .then(function(r){
+          note.style.color = "var(--green)";
+          note.textContent = "Freed " + (r.freed_mb || 0) + " MB." + (r.free_gb != null ? " Now " + r.free_gb + " GB free." : "");
+          btn.disabled = false; loadStorage();
+        }).catch(function(e){ note.textContent = "Failed: " + e; btn.disabled = false; });
     });
   })();
 </script>

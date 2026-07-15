@@ -941,6 +941,59 @@ def gdrive_oauth_disconnect():
     return {"ok": True}
 
 
+@app.get("/api/admin/storage")
+def storage_status():
+    """Volume usage, for the Free up space panel."""
+    try:
+        du = shutil.disk_usage(str(DATA_ROOT))
+        return {"total_gb": round(du.total/1e9, 2), "used_gb": round(du.used/1e9, 2),
+                "free_gb": round(du.free/1e9, 2)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/admin/free-space")
+def free_space():
+    """User-triggered cleanup. Removes only REGENERABLE render leftovers from every
+    job folder — the normalized copy (*_v30.mov) and the working intermediates.
+    Never touches the raw uploaded footage or the finished videos, so nothing the
+    client cares about can be lost. Returns how much was freed."""
+    inter_files = ("base30.mkv", "base30_zoom.mkv", "composited30.mkv",
+                   "_seg_offsets.json", "_concat30.txt")
+    inter_dirs  = ("clips30", "animations")
+    freed = 0
+    if UPLOADS_DIR.exists():
+        for job_dir in UPLOADS_DIR.iterdir():
+            if not job_dir.is_dir():
+                continue
+            for p in job_dir.iterdir():
+                try:
+                    if p.is_file() and (p.name in inter_files or p.name.endswith("_v30.mov")):
+                        freed += p.stat().st_size
+                        p.unlink()
+                except Exception:
+                    pass
+            for name in inter_dirs:
+                dp = job_dir / name
+                try:
+                    if dp.is_dir():
+                        for sub in dp.rglob("*"):
+                            try:
+                                if sub.is_file():
+                                    freed += sub.stat().st_size
+                            except Exception:
+                                pass
+                        shutil.rmtree(dp, ignore_errors=True)
+                except Exception:
+                    pass
+    free_gb = None
+    try:
+        free_gb = round(shutil.disk_usage(str(DATA_ROOT)).free / 1e9, 2)
+    except Exception:
+        pass
+    return {"ok": True, "freed_mb": round(freed / 1e6), "free_gb": free_gb}
+
+
 # ── AI Chat ───────────────────────────────────────────────────────────────
 
 def _job_edl_path(job_id: str) -> Optional[Path]:

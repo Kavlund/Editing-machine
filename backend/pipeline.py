@@ -26,6 +26,10 @@ def _slack(text: str):
 
 # Allow direct imports from the editor module directory
 EDITOR_DIR = Path(__file__).resolve().parent.parent / "editor"
+# Render scratch lives on the container's EPHEMERAL disk, never on the mounted
+# data volume, so a render's heavy temporary files (normalized clips, segments,
+# the composite) never consume the small persistent volume. Wiped after each job.
+SCRATCH_ROOT = Path(os.environ.get("RENDER_SCRATCH_ROOT", "/tmp/ee_render"))
 sys.path.insert(0, str(EDITOR_DIR))
 
 from normalize import normalize
@@ -806,7 +810,9 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
     """
     job_path = jobs_dir / f"{job_id}.json"
     job = json.loads(job_path.read_text())
-    project_dir = uploads_dir / job_id
+    raw_dir     = uploads_dir / job_id       # persistent (volume): the raw upload lives here
+    project_dir = SCRATCH_ROOT / job_id      # ephemeral: ALL render work happens here
+    project_dir.mkdir(parents=True, exist_ok=True)
 
     # Inject key into environment for subprocess scripts
     os.environ["ELEVENLABS_API_KEY"] = elevenlabs_key
@@ -824,14 +830,14 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         _PIPELINE_DIRS  = {"animations", "transcripts", "clips30", "broll"}
         _PIPELINE_STEMS = {"base30", "base30_zoom", "composited30", "final"}
         videos = sorted(
-            p for p in project_dir.rglob("*")
+            p for p in raw_dir.rglob("*")
             if p.is_file()
             and not p.name.startswith(".")
             and p.suffix.lower() in VIDEO_EXTS
             and "_v30" not in p.stem
             and p.stem not in _PIPELINE_STEMS
             and not p.stem.startswith("seg_")
-            and not any(part in _PIPELINE_DIRS for part in p.relative_to(project_dir).parts)
+            and not any(part in _PIPELINE_DIRS for part in p.relative_to(raw_dir).parts)
         )
         if not videos:
             raise RuntimeError("No video files found in the uploaded folder")
@@ -1158,10 +1164,22 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         size_mb = final.stat().st_size / (1024 * 1024)
         _log(job_path, f"Done — final.mp4 is {size_mb:.1f} MB")
 
+        # Copy the finished video from ephemeral scratch onto the volume so the
+        # Download button survives redeploys. The durable copy also goes to Drive
+        # below. If the volume is full, keep serving it from scratch for now.
+        out_final = final
+        try:
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            volume_final = raw_dir / "final.mp4"
+            shutil.copy2(final, volume_final)
+            out_final = volume_final
+        except Exception as e:
+            _log(job_path, f"note: finished video kept on scratch, not copied to the volume ({e})")
+
         job = json.loads(job_path.read_text())
         job["status"]      = "done"
-        job["output_path"] = str(final)
-        job["output_size"] = final.stat().st_size
+        job["output_path"] = str(out_final)
+        job["output_size"] = out_final.stat().st_size
         job_path.write_text(json.dumps(job, indent=2))
 
         client_name = job.get("client_name", "Unknown client")
@@ -1176,7 +1194,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 match_name  = job.get("folder_name") or job_id
                 client_name = job.get("client_name", "")
                 _log(job_path, f"Delivery: uploading '{match_name}' to {client_name or 'Drive'}...")
-                _delivery.deliver_finished(match_name, client_name, final, log=lambda m: _log(job_path, m))
+                _delivery.deliver_finished(match_name, client_name, out_final, log=lambda m: _log(job_path, m))
         except Exception as _e:
             _log(job_path, f"Delivery: skipped ({_e})")
 
@@ -1201,19 +1219,10 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         _slack(f":x: *{client_name}* — `{folder}` failed: {str(exc)[:200]}")
 
     finally:
-        # Always remove the heavy render intermediates — success, failure, or
-        # cancel — so working files never pile up on the volume. All are rebuilt
-        # on a re-render, so deleting them is safe. Guarded because project_dir
-        # may not exist yet if the job failed very early.
+        # The render scratch dir is entirely ephemeral, so remove it whole on
+        # success, failure or cancel — nothing lingers. The raw upload and the
+        # copied-back final.mp4 live under raw_dir on the volume, untouched here.
         try:
-            for f in ("base30.mkv", "base30_zoom.mkv", "composited30.mkv",
-                      "_seg_offsets.json", "_concat30.txt"):
-                p = project_dir / f
-                if p.exists():
-                    p.unlink()
-            for d in ("clips30", "animations"):
-                dp = project_dir / d
-                if dp.is_dir():
-                    shutil.rmtree(dp, ignore_errors=True)
+            shutil.rmtree(project_dir, ignore_errors=True)
         except Exception:
             pass
