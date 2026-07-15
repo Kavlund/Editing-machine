@@ -7,6 +7,7 @@ runs a network call; it only reports what is configured.
 from __future__ import annotations
 import os
 import re
+from pathlib import Path
 
 
 # ── Notion (CPS database) ─────────────────────────────────────────────────────
@@ -40,6 +41,26 @@ GDRIVE_FINISHED_FOLDER_ID   = os.environ.get("GDRIVE_FINISHED_FOLDER_ID", "")
 GDRIVE_SHARE_ANYONE         = os.environ.get("GDRIVE_SHARE_ANYONE", "1") == "1"  # link-shareable
 
 
+# ── Google Drive · sign-in as the user (OAuth) ───────────────────────────────
+# The simplest path for a single operator: the machine signs in AS the user one
+# time, then delivers onto THEIR OWN Drive (their storage, their files) with no
+# Workspace or Shared Drive needed. The client id/secret come from a one-time
+# Google Cloud OAuth client; the long-lived token is minted on the Connect flow
+# and saved under DATA_ROOT so it survives redeploys. When a token is present it
+# takes precedence over any service account above.
+GOOGLE_OAUTH_CLIENT_ID     = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+GOOGLE_OAUTH_REDIRECT_URI  = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")  # optional explicit override
+# With OAuth, no folder ID need be pasted anywhere: the machine finds or creates
+# one root folder by this name in the user's My Drive and works under it.
+GDRIVE_ROOT_FOLDER_NAME    = os.environ.get("GDRIVE_ROOT_FOLDER_NAME", "Editing Machine")
+
+# The minted user token lives under DATA_ROOT (same convention as main.py) so it
+# persists on the mounted volume across redeploys.
+_DATA_ROOT = os.environ.get("DATA_ROOT") or str(Path(__file__).resolve().parent.parent.parent)
+GDRIVE_OAUTH_TOKEN_FILE = os.path.join(_DATA_ROOT, "gdrive_oauth.json")
+
+
 # ── Slack (finished-video notifications) ──────────────────────────────────────
 # One Incoming Webhook URL. When set, a message is posted to that channel the
 # moment a cut is ready ("<Client> — '<video>' is done"). Inert when unset.
@@ -54,7 +75,22 @@ def slack_configured() -> bool:
     return bool(SLACK_WEBHOOK_URL)
 
 
+def gdrive_oauth_available() -> bool:
+    """True when an OAuth client is set up (id + secret present), so the Connect
+    button can run — even before the user has actually signed in."""
+    return bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
+
+
+def gdrive_oauth_ready() -> bool:
+    """True once the user has completed the Google sign-in (token stored)."""
+    return bool(gdrive_oauth_available() and os.path.exists(GDRIVE_OAUTH_TOKEN_FILE))
+
+
 def gdrive_configured() -> bool:
+    # Signed in as the user (OAuth) needs no folder ID — the root folder is
+    # auto-created by name — so a stored token alone means "ready".
+    if gdrive_oauth_ready():
+        return True
     has_creds  = bool(GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON)
     has_target = bool(GDRIVE_ROOT_FOLDER_ID or GDRIVE_FINISHED_FOLDER_ID)
     return bool(has_creds and has_target)
@@ -78,11 +114,18 @@ def status() -> dict:
         "NOTION_API_KEY": NOTION_API_KEY,
         "NOTION_CPS_DATABASE_ID": NOTION_CPS_DATABASE_ID,
     }.items() if not v]
-    missing_gdrive = []
-    if not (GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON):
-        missing_gdrive.append("GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON")
-    if not (GDRIVE_ROOT_FOLDER_ID or GDRIVE_FINISHED_FOLDER_ID):
-        missing_gdrive.append("GDRIVE_ROOT_FOLDER_ID")
+    if gdrive_oauth_ready():
+        gdrive_method, missing_gdrive = "oauth", []
+    elif gdrive_oauth_available():
+        gdrive_method = "oauth_pending"
+        missing_gdrive = ["Click Connect Google Drive to sign in"]
+    else:
+        gdrive_method = "service_account" if (GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON) else "unset"
+        missing_gdrive = []
+        if not (GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON):
+            missing_gdrive.append("GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET (then Connect), or a service account")
+        if not (GDRIVE_ROOT_FOLDER_ID or GDRIVE_FINISHED_FOLDER_ID):
+            missing_gdrive.append("GDRIVE_ROOT_FOLDER_ID")
     return {
         "delivery_mode": NOTION_DELIVERY_MODE,
         "notion": {
@@ -94,9 +137,12 @@ def status() -> dict:
         },
         "google_drive": {
             "configured": gdrive_configured(),
+            "method": gdrive_method,
+            "oauth_available": gdrive_oauth_available(),
+            "oauth_connected": gdrive_oauth_ready(),
             "missing": missing_gdrive,
             "share_link": GDRIVE_SHARE_ANYONE,
-            "layout": "per_client" if GDRIVE_ROOT_FOLDER_ID else ("flat" if GDRIVE_FINISHED_FOLDER_ID else "unset"),
+            "layout": "oauth_my_drive" if gdrive_oauth_ready() else ("per_client" if GDRIVE_ROOT_FOLDER_ID else ("flat" if GDRIVE_FINISHED_FOLDER_ID else "unset")),
             "edited_subfolder": GDRIVE_EDITED_SUBFOLDER,
         },
         "slack": {

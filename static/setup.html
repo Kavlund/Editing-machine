@@ -109,13 +109,24 @@
         <span class="badge" id="b-drive"><span class="d"></span><span class="t">Not connected</span></span>
       </div>
       <div class="body">
-        <ol class="do">
-          <li>In Google Cloud, create a <b>service account</b> and download its <b>JSON key</b>. Enable the <b>Google Drive API</b>.</li>
-          <li>In Google Drive, create one <b>root folder</b>. Share it with the service account's email as <b>Editor</b>. Copy the folder ID from the URL.</li>
-          <li>In your <b>Railway → Variables</b>, add: <code>GOOGLE_SERVICE_ACCOUNT_JSON</code>, <code>GDRIVE_ROOT_FOLDER_ID</code>, <code>GDRIVE_SHARE_ANYONE=true</code>.</li>
-        </ol>
+        <p style="margin:0 0 14px;color:var(--muted);font-size:14px;">Sign in once with the Google account that holds your Drive. Finished videos then deliver straight onto your own storage. Nothing to copy or paste.</p>
+        <a id="drive-connect" href="/api/gdrive/oauth/start"
+           style="display:inline-flex;align-items:center;gap:9px;background:var(--green);color:#04140b;font-weight:650;font-size:14px;text-decoration:none;padding:11px 18px;border-radius:11px;border:1px solid var(--green);">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          <span id="drive-connect-label">Connect Google Drive</span>
+        </a>
+        <p id="drive-connect-note" style="margin:12px 0 0;font-size:12.5px;color:var(--muted);"></p>
+
+        <details style="margin-top:16px;border-top:1px solid var(--card-line);padding-top:14px;">
+          <summary style="cursor:pointer;font-size:13px;color:var(--muted);">First time only: set up the sign-in key (about 5 minutes)</summary>
+          <ol class="do" style="margin-top:12px;">
+            <li>In <b>Google Cloud → APIs &amp; Services → Credentials</b>, create an <b>OAuth client ID</b> of type <b>Web application</b>. Enable the <b>Google Drive API</b>.</li>
+            <li>Add this exact <b>Authorized redirect URI</b>:<br><code id="drive-redirect" style="word-break:break-all;">loading…</code> <button class="copy" id="drive-redirect-copy" data-copy="">copy</button></li>
+            <li>In <b>Railway → Variables</b>, add <code>GOOGLE_OAUTH_CLIENT_ID</code> and <code>GOOGLE_OAUTH_CLIENT_SECRET</code>. Then click Connect above.</li>
+          </ol>
+        </details>
       </div>
-      <p class="hint">When it connects, adding a client auto-creates their <code>&lt;Client&gt;/Edited/</code> folder.</p>
+      <p class="hint">Delivers onto your own Drive. Adding a client auto-creates their <code>&lt;Client&gt;/Edited/</code> folder.</p>
     </div>
 
     <!-- 2 Notion -->
@@ -194,6 +205,47 @@
     }catch(e){ /* keep last state */ }
   }
   poll(); setInterval(poll, 3500);
+
+  // ── Google Drive sign-in ──────────────────────────────────────────────
+  (function(){
+    var connectBtn  = document.getElementById("drive-connect");
+    var label       = document.getElementById("drive-connect-label");
+    var note        = document.getElementById("drive-connect-note");
+    var redirectEl  = document.getElementById("drive-redirect");
+    var redirectCopy= document.getElementById("drive-redirect-copy");
+    var available   = false;
+
+    // One-time message when Google has just bounced back to us.
+    var drive = new URLSearchParams(location.search).get("drive");
+    if(drive === "connected"){ note.textContent = "✅ Signed in. Google Drive is connected."; note.style.color = "var(--green)"; }
+    else if(drive === "denied"){ note.textContent = "Sign-in was cancelled. Click Connect to try again."; }
+    else if(drive === "error"){ note.textContent = "Something went wrong signing in. Check the two keys in Railway, then try again."; note.style.color = "var(--amber)"; }
+    if(drive){ history.replaceState({}, "", location.pathname); }
+
+    fetch("/api/gdrive/oauth/info",{cache:"no-store"})
+      .then(function(r){ return r.json(); })
+      .then(function(info){
+        available = !!info.available;
+        if(info.redirect_uri){
+          redirectEl.textContent = info.redirect_uri;
+          if(redirectCopy){ redirectCopy.dataset.copy = info.redirect_uri; }
+        }
+        if(info.connected){ label.textContent = "Reconnect Google Drive"; }
+        if(!available && !note.textContent){
+          note.textContent = "Add the two sign-in keys below first, then this button turns on.";
+        }
+      }).catch(function(){});
+
+    connectBtn.addEventListener("click", function(e){
+      if(!available){
+        e.preventDefault();
+        note.textContent = "Add GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in Railway first (see the note below).";
+        note.style.color = "var(--amber)";
+        var det = connectBtn.closest(".body").querySelector("details");
+        if(det){ det.open = true; }
+      }
+    });
+  })();
 </script>
 </body>
 </html>

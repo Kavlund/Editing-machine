@@ -37,4 +37,4 @@ COPY . .
 RUN mkdir -p /app/data /app/uploads
 
 EXPOSE 8765
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8765"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8765", "--proxy-headers", "--forwarded-allow-ips=*"]

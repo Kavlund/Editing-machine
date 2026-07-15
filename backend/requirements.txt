@@ -11,3 +11,4 @@ uvicorn==0.30.0
 # Client integrations (Google Drive delivery). Notion uses plain requests.
 google-api-python-client==2.149.0
 google-auth==2.35.0
+google-auth-oauthlib==1.2.1   # user sign-in (deliver onto the user's own Drive)

@@ -788,6 +788,109 @@ def integrations_status():
         return {"error": str(e)}
 
 
+# ── Google Drive sign-in (OAuth) ────────────────────────────────────────────
+# Delivers onto the user's OWN Google Drive by signing in as them once. The
+# refresh token is saved under DATA_ROOT so it survives redeploys. These routes
+# sit behind the normal login; Google's redirect back carries the Lax session
+# cookie, so the callback is authenticated like any same-site navigation.
+
+_GDRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+
+def _oauth_redirect_uri(request: Request) -> str:
+    """The callback URL Google returns to. Honors an explicit override, else is
+    built from the forwarded host so it is correct behind Railway's proxy."""
+    from integrations import config as _icfg
+    if _icfg.GOOGLE_OAUTH_REDIRECT_URI:
+        return _icfg.GOOGLE_OAUTH_REDIRECT_URI
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+    host  = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",")[0].strip()
+    return f"{proto}://{host}/api/gdrive/oauth/callback"
+
+
+def _build_gdrive_flow(redirect_uri: str):
+    from google_auth_oauthlib.flow import Flow
+    from integrations import config as _icfg
+    client_config = {"web": {
+        "client_id": _icfg.GOOGLE_OAUTH_CLIENT_ID,
+        "client_secret": _icfg.GOOGLE_OAUTH_CLIENT_SECRET,
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "redirect_uris": [redirect_uri],
+    }}
+    return Flow.from_client_config(client_config, scopes=_GDRIVE_SCOPES, redirect_uri=redirect_uri)
+
+
+@app.get("/api/gdrive/oauth/info")
+def gdrive_oauth_info(request: Request):
+    """Powers the Setup page's Connect button and shows the redirect URI to register."""
+    from integrations import config as _icfg
+    return {
+        "available": _icfg.gdrive_oauth_available(),
+        "connected": _icfg.gdrive_oauth_ready(),
+        "redirect_uri": _oauth_redirect_uri(request),
+    }
+
+
+@app.get("/api/gdrive/oauth/start")
+def gdrive_oauth_start(request: Request):
+    """Begin the Google sign-in — redirects the browser to Google's consent screen."""
+    from integrations import config as _icfg
+    if not _icfg.gdrive_oauth_available():
+        return JSONResponse(
+            {"detail": "Add GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in Railway first."},
+            status_code=400)
+    try:
+        flow = _build_gdrive_flow(_oauth_redirect_uri(request))
+        auth_url, state = flow.authorization_url(
+            access_type="offline", include_granted_scopes="true", prompt="consent")
+    except ImportError:
+        return JSONResponse({"detail": "google-auth-oauthlib is not installed on the server."}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"detail": f"Could not start Google sign-in: {e}"}, status_code=500)
+    resp = RedirectResponse(auth_url, status_code=302)
+    resp.set_cookie("gdrive_oauth_state", state, max_age=600, httponly=True,
+                    samesite="lax", secure=os.environ.get("HTTPS", "") == "1")
+    return resp
+
+
+@app.get("/api/gdrive/oauth/callback")
+def gdrive_oauth_callback(request: Request):
+    """Google returns here after consent. Exchange the code for a token and save it."""
+    from integrations import config as _icfg
+    if request.query_params.get("error"):
+        return RedirectResponse("/setup.html?drive=denied", status_code=302)
+    code = request.query_params.get("code", "")
+    state = request.query_params.get("state", "")
+    cookie_state = request.cookies.get("gdrive_oauth_state", "")
+    if not code or not state or not cookie_state or not hmac.compare_digest(state, cookie_state):
+        return RedirectResponse("/setup.html?drive=error", status_code=302)
+    try:
+        flow = _build_gdrive_flow(_oauth_redirect_uri(request))
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        os.makedirs(os.path.dirname(_icfg.GDRIVE_OAUTH_TOKEN_FILE), exist_ok=True)
+        with open(_icfg.GDRIVE_OAUTH_TOKEN_FILE, "w") as f:
+            f.write(creds.to_json())
+    except Exception:
+        return RedirectResponse("/setup.html?drive=error", status_code=302)
+    resp = RedirectResponse("/setup.html?drive=connected", status_code=302)
+    resp.delete_cookie("gdrive_oauth_state")
+    return resp
+
+
+@app.post("/api/gdrive/oauth/disconnect")
+def gdrive_oauth_disconnect():
+    """Forget the stored Google sign-in."""
+    from integrations import config as _icfg
+    try:
+        if os.path.exists(_icfg.GDRIVE_OAUTH_TOKEN_FILE):
+            os.remove(_icfg.GDRIVE_OAUTH_TOKEN_FILE)
+    except Exception as e:
+        return JSONResponse({"ok": False, "detail": str(e)}, status_code=500)
+    return {"ok": True}
+
+
 # ── AI Chat ───────────────────────────────────────────────────────────────
 
 def _job_edl_path(job_id: str) -> Optional[Path]:

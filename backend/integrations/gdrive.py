@@ -8,6 +8,7 @@ Requires: google-api-python-client, google-auth  (see requirements.txt).
 Imports are guarded so the app still boots if the libs aren't installed yet.
 """
 from __future__ import annotations
+import os
 import json
 from pathlib import Path
 
@@ -16,24 +17,96 @@ from . import config
 _SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
-def _service():
-    """Build an authenticated Drive service, or None if libs/creds are missing."""
+def _oauth_credentials(log=lambda m: None):
+    """User credentials from the stored Google sign-in (Option A). Returns None if
+    no token is stored or the login has been revoked. Refreshes and re-saves the
+    access token when it has simply expired."""
+    if not config.gdrive_oauth_available():
+        return None
+    if not os.path.exists(config.GDRIVE_OAUTH_TOKEN_FILE):
+        return None
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+    except ImportError:
+        return None
+    try:
+        creds = Credentials.from_authorized_user_file(config.GDRIVE_OAUTH_TOKEN_FILE, _SCOPES)
+    except Exception as e:
+        log(f"gdrive: stored Google login is unreadable ({e}) — reconnect on the Setup page")
+        return None
+    try:
+        if not creds.valid and creds.refresh_token:
+            creds.refresh(Request())
+            try:
+                with open(config.GDRIVE_OAUTH_TOKEN_FILE, "w") as f:
+                    f.write(creds.to_json())
+            except Exception:
+                pass  # refresh still usable for this run even if we couldn't persist it
+    except Exception as e:
+        log(f"gdrive: Google login expired ({e}) — reconnect on the Setup page")
+        return None
+    return creds if creds.valid else None
+
+
+def _service_account_credentials():
+    """Service-account credentials (the alternative to a user sign-in)."""
     try:
         from google.oauth2 import service_account
+    except ImportError:
+        return None
+    if config.GOOGLE_SERVICE_ACCOUNT_FILE and Path(config.GOOGLE_SERVICE_ACCOUNT_FILE).exists():
+        return service_account.Credentials.from_service_account_file(
+            config.GOOGLE_SERVICE_ACCOUNT_FILE, scopes=_SCOPES)
+    if config.GOOGLE_SERVICE_ACCOUNT_JSON:
+        info = json.loads(config.GOOGLE_SERVICE_ACCOUNT_JSON)
+        return service_account.Credentials.from_service_account_info(info, scopes=_SCOPES)
+    return None
+
+
+def _service(log=lambda m: None):
+    """Authenticated Drive service. Prefers the user's own Google sign-in (Option A,
+    OAuth) and falls back to a service account. None if neither is available."""
+    try:
         from googleapiclient.discovery import build
     except ImportError:
         return None
+    creds = _oauth_credentials(log) or _service_account_credentials()
+    if creds is None:
+        return None
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
 
-    if config.GOOGLE_SERVICE_ACCOUNT_FILE and Path(config.GOOGLE_SERVICE_ACCOUNT_FILE).exists():
-        creds = service_account.Credentials.from_service_account_file(
-            config.GOOGLE_SERVICE_ACCOUNT_FILE, scopes=_SCOPES)
-    elif config.GOOGLE_SERVICE_ACCOUNT_JSON:
-        info = json.loads(config.GOOGLE_SERVICE_ACCOUNT_JSON)
-        creds = service_account.Credentials.from_service_account_info(info, scopes=_SCOPES)
-    else:
+
+def _find_or_create_root_by_name(svc, name: str, log) -> str | None:
+    """Find (or create) a top-level folder called `name` in the user's My Drive.
+    Used with the user sign-in (Option A) so no folder ID is pasted anywhere."""
+    safe = name.replace("\\", "\\\\").replace("'", "\\'")
+    q = (f"name = '{safe}' and 'root' in parents and "
+         f"mimeType = 'application/vnd.google-apps.folder' and trashed = false")
+    try:
+        res = svc.files().list(q=q, spaces="drive", fields="files(id, name)", pageSize=1,
+                               supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+        hits = res.get("files", [])
+        if hits:
+            return hits[0]["id"]
+        created = svc.files().create(
+            body={"name": name, "mimeType": "application/vnd.google-apps.folder"},
+            fields="id", supportsAllDrives=True).execute()
+        log(f"gdrive: created root folder '{name}' in your Drive")
+        return created["id"]
+    except Exception as e:
+        log(f"gdrive: could not resolve root folder '{name}' ({e})")
         return None
 
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+def _resolve_root(svc, log) -> str | None:
+    """The one root folder everything nests under. A pasted folder ID wins;
+    otherwise, when signed in as the user, resolve/create it by name."""
+    if config.GDRIVE_ROOT_FOLDER_ID:
+        return config.GDRIVE_ROOT_FOLDER_ID
+    if config.gdrive_oauth_ready():
+        return _find_or_create_root_by_name(svc, config.GDRIVE_ROOT_FOLDER_NAME, log)
+    return None
 
 
 def _find_or_create_folder(svc, name: str, parent_id: str) -> str:
@@ -57,12 +130,13 @@ def _find_or_create_folder(svc, name: str, parent_id: str) -> str:
 
 def _resolve_target_folder(svc, client_name: str, log) -> str | None:
     """Where the finished cut should land.
-      - root configured -> "<root>/<client>/<Edited>/" (auto-created), isolated per client
+      - root resolved -> "<root>/<client>/<Edited>/" (auto-created), isolated per client
       - else finished folder -> that flat folder
     """
-    if config.GDRIVE_ROOT_FOLDER_ID:
+    root = _resolve_root(svc, log)
+    if root:
         client = (client_name or "Unsorted").strip() or "Unsorted"
-        client_folder = _find_or_create_folder(svc, client, config.GDRIVE_ROOT_FOLDER_ID)
+        client_folder = _find_or_create_folder(svc, client, root)
         edited = _find_or_create_folder(svc, config.GDRIVE_EDITED_SUBFOLDER, client_folder)
         return edited
     if config.GDRIVE_FINISHED_FOLDER_ID:
@@ -74,7 +148,7 @@ def provision_client_folder(client_name: str, log=lambda m: None) -> str | None:
     """Create '<root>/<Client>/<Edited>/' the moment a client is added, so their
     Drive folder exists up front (not only after the first render). No-op / safe
     when Drive isn't configured. Returns the client folder id, or None."""
-    if not config.gdrive_configured() or not config.GDRIVE_ROOT_FOLDER_ID:
+    if not config.gdrive_configured():
         return None
     try:
         from googleapiclient.discovery import build  # noqa: F401  (ensure libs present)
@@ -82,11 +156,14 @@ def provision_client_folder(client_name: str, log=lambda m: None) -> str | None:
         log("gdrive: google-api-python-client not installed — cannot provision folder")
         return None
     try:
-        svc = _service()
+        svc = _service(log)
         if svc is None:
             return None
+        root = _resolve_root(svc, log)
+        if not root:
+            return None
         client = (client_name or "Unsorted").strip() or "Unsorted"
-        client_folder = _find_or_create_folder(svc, client, config.GDRIVE_ROOT_FOLDER_ID)
+        client_folder = _find_or_create_folder(svc, client, root)
         _find_or_create_folder(svc, config.GDRIVE_EDITED_SUBFOLDER, client_folder)
         log(f"gdrive: provisioned Drive folder '{client}/{config.GDRIVE_EDITED_SUBFOLDER}'")
         return client_folder
@@ -108,9 +185,9 @@ def upload_video(local_path: Path, display_name: str, client_name: str = "",
         return None
 
     try:
-        svc = _service()
+        svc = _service(log)
         if svc is None:
-            log("gdrive: service account not available — check credentials")
+            log("gdrive: not connected — sign in on the Setup page (or check the service account)")
             return None
 
         target_folder = _resolve_target_folder(svc, client_name, log)
