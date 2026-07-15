@@ -703,6 +703,9 @@ input[type="color"] {
   text-align: center;
   cursor: pointer;
   transition: border-color .2s, background .2s;
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .broll-drop-zone:hover,
 .broll-drop-zone.broll-drag {
