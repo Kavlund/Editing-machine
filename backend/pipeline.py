@@ -381,12 +381,30 @@ def _identify_filler_words(source_map: dict, speaker: str | None,
                 "truth for what belongs in the video. In any language, a hesitation or false start is "
                 "simply a spoken run of words that is NOT in the script.\n"
                 "  - DELETE spoken words that are absent from the script AND are clearly hesitations, "
-                "filler sounds, stutters, or false starts (repeated or abandoned attempts at a line).\n"
-                "  - KEEP every spoken word that matches the script, even loosely — spelling, accents "
+                "filler sounds, stutters, or false starts.\n"
+                "  - KEEP the spoken words that match the script, even loosely — spelling, accents "
                 "and punctuation do not matter.\n"
                 "  - The speaker may paraphrase or ad-lib REAL content that is not word-for-word in the "
                 "script. Never delete genuine content just because it differs from the script; only "
-                "remove true hesitations, filler and false starts. Precision over aggression still holds."
+                "remove true hesitations, filler and false starts.\n\n"
+                "RETAKES — THE KEY CASE, GET THIS RIGHT:\n"
+                "Speakers often record the SAME scripted line several times in a row until they get it "
+                "right, usually with a spoken aside in between ('no wait', 'let me take that again', "
+                "'take two', 'sorry', 'again', 'øh nej', 'lige igen'). When the same scripted line "
+                "appears more than once in the transcript:\n"
+                "  - KEEP ONLY THE LAST complete, clean delivery of that line.\n"
+                "  - DELETE every earlier attempt of it, in full (the whole run of words, not just parts).\n"
+                "  - DELETE any aside or self-direction spoken between the attempts — it is never in the script.\n"
+                "So every scripted line ends up in the finished video EXACTLY ONCE.\n"
+                "Worked example — SCRIPT line: 'This is how you get big biceps.'\n"
+                "  Transcript: yeah oh so this is how you get big biceps  oh no shit I want to take that "
+                "again  oh this is how you get big biceps\n"
+                "  DELETE the entire first attempt ('yeah oh so this is how you get big biceps') AND the "
+                "aside ('oh no shit I want to take that again').\n"
+                "  KEEP only the final clean delivery ('this is how you get big biceps', trimming its "
+                "leading filler 'oh'). The line now appears once, matching the script.\n"
+                "Precision over aggression still holds for real content, but a repeated take is NOT real "
+                "content — remove it."
             )
         user_content = f"Transcript words:\n{numbered}\n\nJSON array of indices to delete:"
         if has_script:
@@ -403,12 +421,22 @@ def _identify_filler_words(source_map: dict, speaker: str | None,
             raw = _resp_text(resp)
             m = re.search(r'\[[\d,\s]*\]', raw)
             idxs = set(int(x) for x in json.loads(m.group())) if m else set()
-            # guard: never delete a runaway fraction of words. With a script as
-            # ground truth we can trust a deeper clean (retakes/false starts), so
-            # the ceiling is higher than the unscripted default.
-            guard = 0.45 if has_script else 0.30
-            if len(idxs) > guard * len(words):
-                log_fn(f"filler: model flagged {len(idxs)}/{len(words)} words (>{int(guard*100)}%) — too aggressive, skipping cut for {name}")
+            # Guard against a runaway model. WITHOUT a script, cap deletions at 30%
+            # of words. WITH a script, heavy deletion is often CORRECT — three
+            # retakes of every line removes two thirds of the footage — so a flat
+            # cap would wrongly block it. Instead, check the cut still leaves
+            # roughly the script's worth of words; only reject a cut that leaves
+            # far LESS than the script (a sign the model mis-aligned).
+            if has_script:
+                script_words = len(re.findall(r"[^\W\d_]+|\d+", script, flags=re.UNICODE))
+                kept = len(words) - len(idxs)
+                too_aggressive = script_words > 0 and kept < 0.45 * script_words
+                guard_desc = f"kept {kept} words vs script's ~{script_words}"
+            else:
+                too_aggressive = len(idxs) > 0.30 * len(words)
+                guard_desc = f"{len(idxs)}/{len(words)} words over 30%"
+            if too_aggressive:
+                log_fn(f"filler: cut looks wrong ({guard_desc}) — skipping it for {name} to stay safe")
                 idxs = set()
             result[name] = idxs
             if idxs:
