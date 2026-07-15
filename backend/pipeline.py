@@ -470,9 +470,11 @@ def _broll_tag_key(clip: Path) -> str:
     return f"{clip.name}:{st.st_size}:{int(st.st_mtime)}"
 
 
-def read_broll_tags(broll_src: Path, clips: list) -> dict:
-    """Return {name: tag_info | None} from the cache without re-tagging (for the UI)."""
-    cache_path = broll_src / ".tags.json"
+def read_broll_tags(broll_src: Path, clips: list, cache_dir: Path = None) -> dict:
+    """Return {name: tag_info | None} from the cache without re-tagging (for the UI).
+    cache_dir (when given) is where the persistent .tags.json lives, separate from
+    the working clip folder — used when clips are pulled fresh from Drive each run."""
+    cache_path = (cache_dir or broll_src) / ".tags.json"
     cache = {}
     if cache_path.exists():
         try: cache = json.loads(cache_path.read_text())
@@ -480,11 +482,15 @@ def read_broll_tags(broll_src: Path, clips: list) -> dict:
     return {clip.name: cache.get(_broll_tag_key(clip)) for clip in clips}
 
 
-def tag_broll_clips(broll_src: Path, clips: list, anthropic_key: str, log_fn) -> dict:
+def tag_broll_clips(broll_src: Path, clips: list, anthropic_key: str, log_fn, cache_dir: Path = None) -> dict:
     """Vision-tag each B-roll clip so we know what's in it. Cached in .tags.json
-    keyed by name+size+mtime so we only pay for the Vision call once per clip."""
+    keyed by name+size+mtime so we only pay for the Vision call once per clip.
+    cache_dir (when given) keeps that cache on a persistent disk while the clips
+    themselves live in an ephemeral working folder (Drive-pulled B-roll)."""
     import anthropic as ant, base64
-    cache_path = broll_src / ".tags.json"
+    cache_dir = cache_dir or broll_src
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cache_dir / ".tags.json"
     cache = {}
     if cache_path.exists():
         try: cache = json.loads(cache_path.read_text())
@@ -1012,9 +1018,34 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             )
 
         # ── 4b. Inject B-roll — AI-matched to what's being said ────────────────
-        client_id = job.get("client_id", "")
-        BASE_DIR  = Path(os.environ.get("DATA_ROOT") or Path(__file__).parent.parent)
-        broll_src = BASE_DIR / "broll_library" / client_id
+        client_id   = job.get("client_id", "")
+        client_name = job.get("client_name", "")
+        BASE_DIR    = Path(os.environ.get("DATA_ROOT") or Path(__file__).parent.parent)
+        # Persistent per-client folder on the volume: holds any locally-uploaded
+        # clips AND the vision-tag cache (so each clip is analysed only once).
+        local_broll = BASE_DIR / "broll_library" / client_id
+        local_broll.mkdir(parents=True, exist_ok=True)
+
+        # Working B-roll folder for THIS render, on ephemeral scratch. Clips come
+        # from local uploads plus the client's Google Drive B-roll folder (Option
+        # A: no in-app upload). Pulled fresh each render; the volume stays lean.
+        broll_src = project_dir / "broll_src"
+        broll_src.mkdir(exist_ok=True)
+        for f in local_broll.iterdir():
+            if f.is_file() and f.suffix.lower() in BROLL_EXTS:
+                dst = broll_src / f.name
+                if not dst.exists():
+                    shutil.copy2(f, dst)
+        try:
+            from integrations import config as _icfg, gdrive as _gdrive
+            if _icfg.gdrive_configured():
+                _log(job_path, "B-roll: checking the client's Google Drive folder...")
+                n = _gdrive.download_broll(client_name, broll_src, log=lambda m: _log(job_path, m))
+                _log(job_path, f"B-roll: {n} clip(s) available from Google Drive"
+                     if n else "B-roll: none found in the Drive folder")
+        except Exception as _e:
+            _log(job_path, f"B-roll: Drive pull skipped ({_e})")
+
         clips = sorted(
             f for f in broll_src.iterdir()
             if f.is_file() and f.suffix.lower() in BROLL_EXTS
@@ -1068,7 +1099,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 total_dur = sum(r["end"] - r["start"] for r in edl["ranges"]) or 1.0
                 mode_txt  = f"exactly {broll_count}" if broll_count else "AI-decided count of"
                 _log(job_path, f"B-roll: tagging {len(clips)} clip(s), placing {mode_txt} cutaway(s)...")
-                tags = tag_broll_clips(broll_src, clips, anthropic_key, lambda m: _log(job_path, m))
+                tags = tag_broll_clips(broll_src, clips, anthropic_key, lambda m: _log(job_path, m), cache_dir=local_broll)
                 _log(job_path, "B-roll: matching clips to the transcript...")
                 placements = _plan_broll(source_map, tags, palmier_instructions or "",
                                          anthropic_key, lambda m: _log(job_path, m),

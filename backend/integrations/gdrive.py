@@ -165,11 +165,105 @@ def provision_client_folder(client_name: str, log=lambda m: None) -> str | None:
         client = (client_name or "Unsorted").strip() or "Unsorted"
         client_folder = _find_or_create_folder(svc, client, root)
         _find_or_create_folder(svc, config.GDRIVE_EDITED_SUBFOLDER, client_folder)
-        log(f"gdrive: provisioned Drive folder '{client}/{config.GDRIVE_EDITED_SUBFOLDER}'")
+        _find_or_create_folder(svc, config.GDRIVE_BROLL_SUBFOLDER, client_folder)
+        log(f"gdrive: provisioned Drive folders '{client}/{config.GDRIVE_EDITED_SUBFOLDER}' and '{client}/{config.GDRIVE_BROLL_SUBFOLDER}'")
         return client_folder
     except Exception as e:
         log(f"gdrive: could not provision folder for '{client_name}' ({e})")
         return None
+
+
+def _resolve_broll_folder(svc, client_name: str, log):
+    """The client's B-roll folder in Drive: <root>/<Client>/<B-roll>/. None if Drive
+    has no resolvable root."""
+    root = _resolve_root(svc, log)
+    if not root:
+        return None
+    client = (client_name or "Unsorted").strip() or "Unsorted"
+    client_folder = _find_or_create_folder(svc, client, root)
+    return _find_or_create_folder(svc, config.GDRIVE_BROLL_SUBFOLDER, client_folder)
+
+
+def _rfc3339_to_epoch(s):
+    """Parse a Drive modifiedTime (e.g. '2026-08-07T17:13:10.123Z') to epoch secs."""
+    if not s:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+_BROLL_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+
+
+def download_broll(client_name: str, dest_dir: Path, log=lambda m: None) -> int:
+    """Download the client's B-roll clips from their Drive B-roll folder into
+    dest_dir. Each file's mtime is set to the Drive modifiedTime so the vision-tag
+    cache stays stable across re-downloads (a clip is analysed once, ever). Returns
+    the number of clips in dest_dir. No-op / safe when Drive isn't set up."""
+    if not config.gdrive_configured():
+        return 0
+    try:
+        from googleapiclient.http import MediaIoBaseDownload
+    except ImportError:
+        return 0
+    try:
+        svc = _service(log)
+        if svc is None:
+            return 0
+        folder_id = _resolve_broll_folder(svc, client_name, log)
+        if not folder_id:
+            return 0
+
+        files, page_token = [], None
+        q = (f"'{folder_id}' in parents and trashed = false and "
+             f"mimeType != 'application/vnd.google-apps.folder'")
+        while True:
+            res = svc.files().list(
+                q=q, spaces="drive",
+                fields="nextPageToken, files(id, name, size, modifiedTime)",
+                pageSize=100, supportsAllDrives=True, includeItemsFromAllDrives=True,
+                pageToken=page_token).execute()
+            files.extend(res.get("files", []))
+            page_token = res.get("nextPageToken")
+            if not page_token:
+                break
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        count = 0
+        for f in files:
+            name = f.get("name", "")
+            if Path(name).suffix.lower() not in _BROLL_EXTS:
+                continue
+            local = dest_dir / name
+            size  = str(f.get("size", ""))
+            try:  # skip if we already have an identical copy in this working folder
+                if size and local.exists() and str(local.stat().st_size) == size:
+                    count += 1
+                    continue
+            except Exception:
+                pass
+            try:
+                import io
+                req = svc.files().get_media(fileId=f["id"], supportsAllDrives=True)
+                with io.FileIO(str(local), "wb") as buf:
+                    downloader = MediaIoBaseDownload(buf, req)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+                mt = _rfc3339_to_epoch(f.get("modifiedTime"))
+                if mt:
+                    os.utime(local, (mt, mt))
+                count += 1
+                log(f"gdrive: pulled B-roll '{name}'")
+            except Exception as e:
+                log(f"gdrive: could not download B-roll '{name}' ({e})")
+        return count
+    except Exception as e:
+        log(f"gdrive: B-roll pull failed ({e})")
+        return 0
 
 
 def upload_video(local_path: Path, display_name: str, client_name: str = "",

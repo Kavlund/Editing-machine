@@ -36,6 +36,9 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 # so each creator's files are isolated and never mixed up.
 GDRIVE_ROOT_FOLDER_ID       = os.environ.get("GDRIVE_ROOT_FOLDER_ID", "")
 GDRIVE_EDITED_SUBFOLDER     = os.environ.get("GDRIVE_EDITED_SUBFOLDER", "Edited")
+# Per-client B-roll folder. The client drops B-roll clips here in their Drive and
+# the machine pulls them at render time (no in-app upload needed).
+GDRIVE_BROLL_SUBFOLDER      = os.environ.get("GDRIVE_BROLL_SUBFOLDER", "B-roll")
 # Optional flat fallback: drop everything straight into this one folder (no per-client).
 GDRIVE_FINISHED_FOLDER_ID   = os.environ.get("GDRIVE_FINISHED_FOLDER_ID", "")
 GDRIVE_SHARE_ANYONE         = os.environ.get("GDRIVE_SHARE_ANYONE", "1") == "1"  # link-shareable
