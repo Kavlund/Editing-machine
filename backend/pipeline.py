@@ -325,15 +325,24 @@ def _speaker_words(transcript: dict, speaker: str | None) -> list:
 
 
 def _identify_filler_words(source_map: dict, speaker: str | None,
-                           anthropic_key: str, log_fn) -> dict:
+                           anthropic_key: str, log_fn, script: str = "") -> dict:
     """Ask Claude which word indices are pure filler / false starts to cut.
 
     Returns {source_name: set(indices)} aligned to _speaker_words() ordering.
     Conservative by design — only clear fillers, never content words.
+
+    When `script` (the words the client meant to say) is given, it is used as
+    ground truth: a hesitation or false start is simply a spoken word that is not
+    in the script. This makes the cut reliable in ANY language (e.g. Danish 'øh')
+    without having to enumerate every language's fillers.
     """
     import anthropic as ant
     sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=1)
     result: dict[str, set] = {}
+    script = (script or "").strip()
+    has_script = bool(script)
+    if has_script:
+        log_fn("filler: using the provided script as ground truth for a clean, language-safe cut")
 
     for name, s in source_map.items():
         if not s["trans"].exists():
@@ -365,20 +374,41 @@ def _identify_filler_words(source_map: dict, speaker: str | None,
             "  - A word if deleting it makes the sentence ungrammatical\n\n"
             "When unsure, KEEP the word. Precision over aggression."
         )
+        if has_script:
+            system += (
+                "\n\nGROUND TRUTH — THE INTENDED SCRIPT:\n"
+                "You are also given the SCRIPT the speaker meant to say. Treat it as the source of "
+                "truth for what belongs in the video. In any language, a hesitation or false start is "
+                "simply a spoken run of words that is NOT in the script.\n"
+                "  - DELETE spoken words that are absent from the script AND are clearly hesitations, "
+                "filler sounds, stutters, or false starts (repeated or abandoned attempts at a line).\n"
+                "  - KEEP every spoken word that matches the script, even loosely — spelling, accents "
+                "and punctuation do not matter.\n"
+                "  - The speaker may paraphrase or ad-lib REAL content that is not word-for-word in the "
+                "script. Never delete genuine content just because it differs from the script; only "
+                "remove true hesitations, filler and false starts. Precision over aggression still holds."
+            )
+        user_content = f"Transcript words:\n{numbered}\n\nJSON array of indices to delete:"
+        if has_script:
+            user_content = (f"Transcript words:\n{numbered}\n\n"
+                            f"The intended SCRIPT (ground truth):\n\"\"\"\n{script[:8000]}\n\"\"\"\n\n"
+                            "JSON array of indices to delete:")
         try:
             resp = sdk.messages.create(
                 model="claude-sonnet-5",
                 max_tokens=2000,
                 system=system,
-                messages=[{"role": "user",
-                           "content": f"Transcript words:\n{numbered}\n\nJSON array of indices to delete:"}],
+                messages=[{"role": "user", "content": user_content}],
             )
             raw = _resp_text(resp)
             m = re.search(r'\[[\d,\s]*\]', raw)
             idxs = set(int(x) for x in json.loads(m.group())) if m else set()
-            # guard: never let it delete more than 30% of words (runaway model)
-            if len(idxs) > 0.30 * len(words):
-                log_fn(f"filler: model flagged {len(idxs)}/{len(words)} words (>30%) — too aggressive, skipping cut for {name}")
+            # guard: never delete a runaway fraction of words. With a script as
+            # ground truth we can trust a deeper clean (retakes/false starts), so
+            # the ceiling is higher than the unscripted default.
+            guard = 0.45 if has_script else 0.30
+            if len(idxs) > guard * len(words):
+                log_fn(f"filler: model flagged {len(idxs)}/{len(words)} words (>{int(guard*100)}%) — too aggressive, skipping cut for {name}")
                 idxs = set()
             result[name] = idxs
             if idxs:
@@ -882,7 +912,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 _log(job_path, "AI: identifying filler words to cut (ums, uhs, hesitations)...")
                 filler_indices = _identify_filler_words(
                     source_map, editing.get("caption_speaker", "speaker_0"),
-                    anthropic_key, lambda m: _log(job_path, m))
+                    anthropic_key, lambda m: _log(job_path, m),
+                    script=job.get("script", ""))
                 total_cut = sum(len(v) for v in (filler_indices or {}).values())
                 _log(job_path, f"AI: {total_cut} filler word(s) marked for removal")
 

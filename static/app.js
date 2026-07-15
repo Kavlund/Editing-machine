@@ -820,11 +820,13 @@ function renderJobs(jobs) {
 
   // Preserve any instructions / B-roll count the user is mid-editing, so a
   // re-render (triggered by another job's log growing) never wipes their input.
-  const draftInstr = {}, draftBroll = {};
+  const draftInstr = {}, draftBroll = {}, draftScript = {};
   document.querySelectorAll('.edit-instr[data-job]').forEach(t => { draftInstr[t.dataset.job] = t.value; });
   document.querySelectorAll('.broll-count-select[data-job]').forEach(s => { draftBroll[s.dataset.job] = s.value; });
-  const focusedJob = document.activeElement?.classList?.contains('edit-instr')
-    ? document.activeElement.dataset.job : null;
+  document.querySelectorAll('.edit-script[data-job]').forEach(t => { draftScript[t.dataset.job] = t.value; });
+  const _active = document.activeElement;
+  const focusedJob = _active?.classList?.contains('edit-instr') ? _active.dataset.job : null;
+  const focusedScriptJob = _active?.classList?.contains('edit-script') ? _active.dataset.job : null;
 
   els.jobsGrid.innerHTML = jobs.map(j => {
     const videoCount = (j.files || []).filter(f => isVideo(f.path)).length;
@@ -843,6 +845,7 @@ function renderJobs(jobs) {
 
     const safeFolder = (j.folder_name || 'untitled').replace(/'/g, "\\'");
     const savedInstructions = (j.palmier_instructions || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const savedScript = (j.script || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const savedBroll = (j.broll_count === 0 || j.broll_count) ? String(j.broll_count) : 'ai';
     const brollOpts = ['ai', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
       .map(v => {
@@ -861,6 +864,16 @@ function renderJobs(jobs) {
         <div class="broll-count-row">
           <label class="broll-count-label" for="broll-count-${j.id}">B-roll clips</label>
           <select class="broll-count-select" id="broll-count-${j.id}" data-job="${j.id}">${brollOpts}</select>
+        </div>
+        <div class="edit-script-block">
+          <label class="edit-script-label" for="script-${j.id}">Script <span class="edit-script-hint">optional · paste what the client meant to say for a bulletproof clean cut in any language</span></label>
+          <textarea
+            class="edit-script"
+            id="script-${j.id}"
+            data-job="${j.id}"
+            placeholder="Paste the exact script here. We hold the video against it and remove every hesitation, filler and false start — including the Danish ones the auto-cut can miss."
+            rows="3"
+          >${savedScript}</textarea>
         </div>
       </div>` : '';
     const actions = [
@@ -947,6 +960,13 @@ function renderJobs(jobs) {
   document.querySelectorAll('.broll-count-select[data-job]').forEach(s => {
     if (draftBroll[s.dataset.job] !== undefined) s.value = draftBroll[s.dataset.job];
   });
+  document.querySelectorAll('.edit-script[data-job]').forEach(t => {
+    if (draftScript[t.dataset.job] !== undefined) t.value = draftScript[t.dataset.job];
+    if (t.dataset.job === focusedScriptJob) {
+      t.focus();
+      t.setSelectionRange(t.value.length, t.value.length);
+    }
+  });
 
   // Scroll open logs to bottom (only if the user has expanded them)
   jobs.forEach(j => {
@@ -964,10 +984,12 @@ window.toggleJobLog = toggleJobLog;
 async function runPipeline(jobId) {
   const textarea = document.querySelector(`.edit-instr[data-job="${jobId}"]`);
   const instructions = textarea ? textarea.value.trim() : '';
+  const scriptEl = document.querySelector(`.edit-script[data-job="${jobId}"]`);
+  const script = scriptEl ? scriptEl.value.trim() : '';
   const brollSel = document.querySelector(`.broll-count-select[data-job="${jobId}"]`);
   const broll_count = brollSel ? brollSel.value : 'ai';   // 'ai' | '0'..'10'
   try {
-    await api.post(`/api/jobs/${jobId}/run`, { instructions, broll_count });
+    await api.post(`/api/jobs/${jobId}/run`, { instructions, broll_count, script });
     toast(instructions ? 'AI editing started' : 'Editing started', 'success');
     await loadJobs();
   } catch (err) {

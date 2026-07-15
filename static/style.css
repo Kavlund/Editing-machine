@@ -1828,6 +1828,34 @@ input[type="color"] {
 .broll-count-select:hover  { border-color: var(--border-focus); }
 .broll-count-select:focus  { outline: none; border-color: var(--indigo); }
 
+/* Optional script — ground truth for a language-safe clean cut */
+.edit-script-block { margin-top: 10px; }
+.edit-script-label {
+  display: block;
+  font-size: .78rem;
+  color: var(--text-muted);
+  letter-spacing: .01em;
+  margin-bottom: 5px;
+}
+.edit-script-hint { color: var(--text-dim); font-weight: 400; }
+.edit-script {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 9px 11px;
+  color: var(--text);
+  font-size: .8rem;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.5;
+  transition: border-color .15s;
+  box-sizing: border-box;
+}
+.edit-script:focus { outline: none; border-color: var(--indigo); }
+.edit-script::placeholder { color: var(--text-dim); font-size: .78rem; }
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PREMIUM GLASS — enhancement layer (glass surfaces · glow · spring motion)

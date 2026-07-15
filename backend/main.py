@@ -706,6 +706,16 @@ async def trigger_pipeline(job_id: str, request: Request):
     elif "palmier_instructions" in body and not body["palmier_instructions"]:
         job.pop("palmier_instructions", None)  # cleared by user
 
+    # Optional script: the words the client meant to say. Used as ground truth so
+    # hesitations and false starts are cut reliably in any language (a spoken word
+    # not in the script is a hesitation). Empty string clears a previously set one.
+    if "script" in body:
+        scr = (body.get("script") or "").strip()
+        if scr:
+            job["script"] = scr
+        else:
+            job.pop("script", None)
+
     # B-roll count for this video: "ai"/None = AI decides, or an integer (0 = none)
     if "broll_count" in body:
         bc = body["broll_count"]
