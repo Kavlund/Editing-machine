@@ -948,7 +948,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
 
         # ── 4b. Inject B-roll — AI-matched to what's being said ────────────────
         client_id = job.get("client_id", "")
-        BASE_DIR  = Path(__file__).parent.parent
+        BASE_DIR  = Path(os.environ.get("DATA_ROOT") or Path(__file__).parent.parent)
         broll_src = BASE_DIR / "broll_library" / client_id
         clips = sorted(
             f for f in broll_src.iterdir()

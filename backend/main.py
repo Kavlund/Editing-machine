@@ -31,12 +31,17 @@ ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 app = FastAPI(title="Talking Head Editor")
 
 BASE         = Path(__file__).parent.parent
-DATA_DIR     = BASE / "data"
+# All runtime data (clients, uploaded footage, B-roll, style refs) lives under
+# DATA_ROOT. On a host with an ephemeral filesystem (e.g. Railway), point
+# DATA_ROOT at a mounted persistent Volume (e.g. /data) so nothing is wiped on
+# redeploy. Defaults to BASE, so local dev is unchanged.
+DATA_ROOT    = Path(os.environ.get("DATA_ROOT", str(BASE)))
+DATA_DIR     = DATA_ROOT / "data"
 CLIENTS_FILE = DATA_DIR / "clients.json"
 JOBS_DIR     = DATA_DIR / "jobs"
-UPLOADS_DIR  = BASE / "uploads"
-BROLL_DIR    = BASE / "broll_library"   # broll_library/{client_id}/*.mp4
-STYLE_DIR    = BASE / "style_refs"      # style_refs/{client_id}/*.mp4 (reference clips)
+UPLOADS_DIR  = DATA_ROOT / "uploads"
+BROLL_DIR    = DATA_ROOT / "broll_library"   # broll_library/{client_id}/*.mp4
+STYLE_DIR    = DATA_ROOT / "style_refs"      # style_refs/{client_id}/*.mp4 (reference clips)
 
 for d in [DATA_DIR, JOBS_DIR, UPLOADS_DIR, BROLL_DIR, STYLE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
