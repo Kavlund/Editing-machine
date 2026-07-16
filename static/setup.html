@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Setup — Acquisition Empire Editing Machine</title>
+<title>Control Center — Acquisition Empire Editing Machine</title>
 <style>
   :root{
     --bg:#0e1016; --bg2:#141826; --card:rgba(255,255,255,.04); --card-line:rgba(255,255,255,.09);
@@ -69,6 +69,11 @@
   .live .d{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.6s infinite;}
   .banner{background:var(--indigo-soft);border:1px solid rgba(124,116,255,.32);border-radius:13px;padding:14px 17px;margin:0 0 22px;font-size:14.5px;color:#e0ddff;line-height:1.5;}
   .banner b{color:#fff;}
+  .secnav{display:flex;gap:9px;margin:20px 0 4px;flex-wrap:wrap;}
+  .secnav a{font-size:12.5px;color:var(--muted);text-decoration:none;padding:6px 13px;border:1px solid var(--card-line);border-radius:999px;transition:.2s;}
+  .secnav a:hover{color:#fff;border-color:var(--muted);}
+  .section-hdr{font-size:19px;color:#fff;font-weight:700;letter-spacing:-.01em;margin:36px 0 4px;}
+  .section-sub{color:var(--muted);font-size:14px;margin:0 0 16px;line-height:1.5;}
   .owner{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:7px;white-space:nowrap;}
   .owner.you{background:var(--green-soft);color:#8ff0b6;border:1px solid rgba(67,209,127,.35);}
   .owner.editor{background:rgba(255,255,255,.05);color:var(--muted);border:1px solid var(--card-line);}
@@ -86,49 +91,27 @@
     <header>
       <img src="/logo.png" alt="">
       <div>
-        <p class="eyebrow">Setup &middot; One-time</p>
-        <h1>Connect your Editing Machine</h1>
+        <p class="eyebrow">Acquisition Empire &middot; Editing Machine</p>
+        <h1>Control Center</h1>
       </div>
     </header>
-    <p class="lead">Follow the steps below. As each connection goes live, its light turns <b style="color:#8ff0b6">green</b> automatically. <span class="live"><span class="d"></span>This page checks every few seconds.</span> Nothing here can affect your videos. It only wires up delivery.</p>
+    <p class="lead">Everything you manage yourself is here: your <b>connections</b> and your <b>files</b>. <span class="live"><span class="d"></span>Live status updates every few seconds.</span></p>
 
-    <div class="banner">You can set all of this up yourself. For each step: create the connection in your own account, then add the values in your <b>Railway → Variables</b>. Each light turns <b style="color:#8ff0b6">green</b> the moment it connects.</div>
+    <div class="secnav">
+      <a href="#connections">Connections</a>
+      <a href="#files">File management</a>
+    </div>
+
+    <!-- ═══════════ CONNECTIONS ═══════════ -->
+    <h2 class="section-hdr" id="connections">Connections</h2>
+    <p class="section-sub">Connect Google Drive, Notion, and your message channel. Each light turns <b style="color:#8ff0b6">green</b> the moment it goes live.</p>
+
+    <div class="banner">You can set all of this up yourself. For each one: create the connection in your own account, then add the values in your <b>Railway → Variables</b>.</div>
 
     <div class="prog">
       <span class="pill" id="p-drive"><span class="dot"></span> Google Drive</span>
       <span class="pill" id="p-notion"><span class="dot"></span> Notion</span>
       <span class="pill" id="p-slack"><span class="dot"></span> Slack</span>
-    </div>
-
-    <!-- Storage / maintenance -->
-    <div class="step" id="storage-panel" style="display:none;">
-      <div class="step-head">
-        <div class="num">✓</div>
-        <h2>Storage <span id="storage-free" style="color:var(--muted);font-weight:400;font-size:13px;"></span></h2>
-      </div>
-      <div class="body">
-        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Free space on the render volume. If it ever fills up and a render fails, clear the safe render leftovers here. This <b>never</b> deletes uploaded footage or finished videos.</p>
-        <button id="free-space-btn" style="display:inline-flex;align-items:center;gap:8px;background:var(--green);color:#04140b;font-weight:650;font-size:14px;border:none;cursor:pointer;padding:11px 18px;border-radius:11px;">Free up space</button>
-        <p id="free-space-note" style="margin:10px 0 0;font-size:12.5px;color:var(--muted);"></p>
-      </div>
-    </div>
-
-    <!-- Files manager -->
-    <div class="step" id="files-panel" style="display:none;">
-      <div class="step-head">
-        <div class="num">☰</div>
-        <h2>Files <span id="files-summary" style="color:var(--muted);font-weight:400;font-size:13px;"></span></h2>
-      </div>
-      <div class="body">
-        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Everything stored on the volume, biggest first. Tick what you want gone and delete it. Footage and finished videos already in Drive are safe there; this only clears local copies.</p>
-        <div id="files-list" style="display:flex;flex-direction:column;gap:10px;max-height:340px;overflow-y:auto;"></div>
-        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
-          <button id="files-delete-btn" style="display:inline-flex;align-items:center;gap:8px;background:#f0736a;color:#230b09;font-weight:650;font-size:14px;border:none;cursor:pointer;padding:10px 16px;border-radius:10px;opacity:.5;" disabled>Delete selected</button>
-          <span id="files-selected" style="font-size:12.5px;color:var(--muted);"></span>
-          <button id="files-refresh-btn" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:12.5px;text-decoration:underline;">Refresh</button>
-        </div>
-        <p id="files-note" style="margin:10px 0 0;font-size:12.5px;color:var(--muted);"></p>
-      </div>
     </div>
 
     <!-- 1 Google Drive -->
@@ -193,6 +176,41 @@
         </ol>
       </div>
       <p class="hint">You'll get: <b>"✅ Jordan Blake — 'Morning Routine' is done. Go have a look."</b> with the link.</p>
+    </div>
+
+    <!-- ═══════════ FILE MANAGEMENT ═══════════ -->
+    <h2 class="section-hdr" id="files">File management</h2>
+    <p class="section-sub">See what's stored on the volume and free up space. Footage and finished videos in Drive are never touched here.</p>
+
+    <!-- Storage / maintenance -->
+    <div class="step" id="storage-panel" style="display:none;">
+      <div class="step-head">
+        <div class="num">✓</div>
+        <h2>Storage <span id="storage-free" style="color:var(--muted);font-weight:400;font-size:13px;"></span></h2>
+      </div>
+      <div class="body">
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Free space on the render volume. If it ever fills up and a render fails, clear the safe render leftovers here. This <b>never</b> deletes uploaded footage or finished videos.</p>
+        <button id="free-space-btn" style="display:inline-flex;align-items:center;gap:8px;background:var(--green);color:#04140b;font-weight:650;font-size:14px;border:none;cursor:pointer;padding:11px 18px;border-radius:11px;">Free up space</button>
+        <p id="free-space-note" style="margin:10px 0 0;font-size:12.5px;color:var(--muted);"></p>
+      </div>
+    </div>
+
+    <!-- Files manager -->
+    <div class="step" id="files-panel" style="display:none;">
+      <div class="step-head">
+        <div class="num">☰</div>
+        <h2>Files <span id="files-summary" style="color:var(--muted);font-weight:400;font-size:13px;"></span></h2>
+      </div>
+      <div class="body">
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Everything stored on the volume, biggest first. Tick what you want gone and delete it. Footage and finished videos already in Drive are safe there; this only clears local copies.</p>
+        <div id="files-list" style="display:flex;flex-direction:column;gap:10px;max-height:340px;overflow-y:auto;"></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
+          <button id="files-delete-btn" style="display:inline-flex;align-items:center;gap:8px;background:#f0736a;color:#230b09;font-weight:650;font-size:14px;border:none;cursor:pointer;padding:10px 16px;border-radius:10px;opacity:.5;" disabled>Delete selected</button>
+          <span id="files-selected" style="font-size:12.5px;color:var(--muted);"></span>
+          <button id="files-refresh-btn" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:12.5px;text-decoration:underline;">Refresh</button>
+        </div>
+        <p id="files-note" style="margin:10px 0 0;font-size:12.5px;color:var(--muted);"></p>
+      </div>
     </div>
 
     <p class="foot" id="foot">Checking connections…</p>
