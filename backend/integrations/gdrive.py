@@ -266,6 +266,39 @@ def download_broll(client_name: str, dest_dir: Path, log=lambda m: None) -> int:
         return 0
 
 
+def list_broll(client_name: str, log=lambda m: None) -> list:
+    """List the client's B-roll clips in their Drive folder — metadata only, no
+    download. Returns [{"name","id","size","modifiedTime"}]. Safe [] if unset."""
+    if not config.gdrive_configured():
+        return []
+    try:
+        svc = _service(log)
+        if svc is None:
+            return []
+        folder_id = _resolve_broll_folder(svc, client_name, log)
+        if not folder_id:
+            return []
+        out, page_token = [], None
+        q = (f"'{folder_id}' in parents and trashed = false and "
+             f"mimeType != 'application/vnd.google-apps.folder'")
+        while True:
+            res = svc.files().list(
+                q=q, spaces="drive",
+                fields="nextPageToken, files(id, name, size, modifiedTime)",
+                pageSize=100, supportsAllDrives=True, includeItemsFromAllDrives=True,
+                pageToken=page_token).execute()
+            for f in res.get("files", []):
+                if Path(f.get("name", "")).suffix.lower() in _BROLL_EXTS:
+                    out.append(f)
+            page_token = res.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+    except Exception as e:
+        log(f"gdrive: could not list B-roll ({e})")
+        return []
+
+
 def upload_video(local_path: Path, display_name: str, client_name: str = "",
                  log=lambda m: None) -> str | None:
     """Upload a finished video into the client's Edited/ folder. Returns a shareable

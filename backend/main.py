@@ -1195,6 +1195,44 @@ def _rerender_job(job: dict, job_id: str):
     ).start()
 
 
+def _broll_choices(client_id: str, client_name: str) -> tuple:
+    """B-roll available to this client's chat: locally-uploaded clips plus the clips
+    in the client's Google Drive B-roll folder, each with a description when it has
+    already been analysed. Returns (names:set, choices:list of dicts)."""
+    from pipeline import read_broll_tags
+    local_folder = BROLL_DIR / client_id
+    names, choices = set(), []
+    local_files = [f for f in sorted(local_folder.iterdir())
+                   if f.is_file() and f.suffix.lower() in BROLL_EXTS] if local_folder.exists() else []
+    local_tags = read_broll_tags(local_folder, local_files) if local_files else {}
+    for f in local_files:
+        names.add(f.name)
+        choices.append({"file": f.name,
+                        "description": (local_tags.get(f.name) or {}).get("description", ""),
+                        "source": "upload"})
+    try:
+        from integrations import config as _icfg, gdrive as _gdrive
+        if _icfg.gdrive_configured():
+            cache = {}
+            cache_path = local_folder / ".tags.json"
+            if cache_path.exists():
+                try: cache = json.loads(cache_path.read_text())
+                except Exception: cache = {}
+            for f in _gdrive.list_broll(client_name):
+                nm = f.get("name", "")
+                if not nm or nm in names:
+                    continue
+                names.add(nm)
+                desc = ""
+                mt = _gdrive._rfc3339_to_epoch(f.get("modifiedTime"))
+                if mt and f.get("size"):
+                    desc = (cache.get(f"{nm}:{f.get('size')}:{int(mt)}") or {}).get("description", "")
+                choices.append({"file": nm, "description": desc, "source": "drive"})
+    except Exception:
+        pass
+    return names, choices
+
+
 def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Optional[str] = None) -> dict:
     if tool_name == "get_job_edl":
         if not job_id:
@@ -1241,21 +1279,16 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             return {"error": "Job not found"}
         job = json.loads(job_path.read_text())
         client_id = job.get("client_id", "")
+        client_name = job.get("client_name", "")
         folder = BROLL_DIR / client_id
 
         if tool_name == "list_broll":
-            files = [f for f in sorted(folder.iterdir())
-                     if f.is_file() and f.suffix.lower() in BROLL_EXTS] if folder.exists() else []
-            from pipeline import read_broll_tags
-            tags = read_broll_tags(folder, files)
+            _names, choices = _broll_choices(client_id, client_name)
             return {
                 "current_broll_in_video": job.get("broll_last", []),
                 "your_manual_additions":  job.get("broll_add", []),
                 "your_removals":          job.get("broll_remove", []),
-                "available_clips": [
-                    {"file": f.name, "description": (tags.get(f.name) or {}).get("description", "")}
-                    for f in files
-                ],
+                "available_clips": choices,
             }
 
         if tool_name == "add_broll":
@@ -1263,8 +1296,9 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             quote = (tool_input.get("quote") or "").strip()
             if not fname or not quote:
                 return {"error": "Need both a clip 'file' and a 'quote' from the transcript"}
-            if not folder.exists() or not (folder / fname).is_file():
-                return {"error": f"Clip '{fname}' is not in this client's B-roll library"}
+            _names, _ = _broll_choices(client_id, client_name)
+            if fname not in _names:
+                return {"error": f"Clip '{fname}' is not in this client's B-roll library or Drive folder"}
             entry = {"file": fname, "quote": quote,
                      "duration_sec": max(1.5, min(3.5, float(tool_input.get("duration_sec", 2.5))))}
             adds = job.setdefault("broll_add", [])
@@ -1364,7 +1398,7 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
         try:
             resp = sdk.messages.create(
                 model="claude-haiku-4-5-20251001",
-                max_tokens=512,
+                max_tokens=1024,
                 system=system,
                 tools=tools,
                 messages=loop_msgs,
@@ -1395,9 +1429,14 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
                 {"role": "user", "content": tool_results},
             ]
         else:
-            break
+            # Any other stop reason (e.g. the reply ran out of token room): return
+            # whatever text we have rather than a blank generic error.
+            reply = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+            return {"reply": reply or "I couldn't finish that one. Try rephrasing it a bit more specifically.",
+                    "actions": applied}
 
-    return {"reply": "Something went wrong. Please try again.", "actions": applied}
+    return {"reply": "That needed too many steps. Try one change at a time, and be specific about what to adjust.",
+            "actions": applied}
 
 
 @app.post("/api/chat")

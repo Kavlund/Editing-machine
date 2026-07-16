@@ -1207,6 +1207,15 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         except Exception as e:
             _log(job_path, f"note: finished video kept on scratch, not copied to the volume ({e})")
 
+        # Persist edl.json on the volume too, so the "Edit video" chat can read the
+        # finished cut's settings after the ephemeral scratch dir is wiped.
+        try:
+            edl_src = project_dir / "edl.json"
+            if edl_src.exists():
+                shutil.copy2(edl_src, raw_dir / "edl.json")
+        except Exception:
+            pass
+
         job = json.loads(job_path.read_text())
         job["status"]      = "done"
         job["output_path"] = str(out_final)
