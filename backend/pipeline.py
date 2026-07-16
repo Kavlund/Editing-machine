@@ -833,20 +833,38 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         _set_status(job_path, "normalizing")
         _log(job_path, "Scanning uploaded files...")
 
-        _PIPELINE_DIRS  = {"animations", "transcripts", "clips30", "broll"}
+        _PIPELINE_DIRS  = {"animations", "transcripts", "clips30", "broll", "sources", "broll_src"}
         _PIPELINE_STEMS = {"base30", "base30_zoom", "composited30", "final"}
+
+        # Source footage. Full Drive backend: when the job references clips in the
+        # client's Google Drive Source folder, pull them onto scratch. Otherwise
+        # use the raw files uploaded to the volume (local fallback).
+        source_drive = job.get("source_drive") or []
+        if source_drive:
+            from integrations import gdrive as _gdrive
+            scan_dir = project_dir / "sources"
+            scan_dir.mkdir(exist_ok=True)
+            for s in source_drive:
+                fid = s.get("id")
+                nm  = s.get("name") or (f"{fid}.mp4" if fid else "source.mp4")
+                _log(job_path, f"Pulling source '{nm}' from Google Drive...")
+                if not _gdrive.download_file(fid, scan_dir / nm, log=lambda m: _log(job_path, m)):
+                    raise RuntimeError(f"Could not pull source '{nm}' from Google Drive")
+        else:
+            scan_dir = raw_dir
+
         videos = sorted(
-            p for p in raw_dir.rglob("*")
+            p for p in scan_dir.rglob("*")
             if p.is_file()
             and not p.name.startswith(".")
             and p.suffix.lower() in VIDEO_EXTS
             and "_v30" not in p.stem
             and p.stem not in _PIPELINE_STEMS
             and not p.stem.startswith("seg_")
-            and not any(part in _PIPELINE_DIRS for part in p.relative_to(raw_dir).parts)
+            and not any(part in _PIPELINE_DIRS for part in p.relative_to(scan_dir).parts)
         )
         if not videos:
-            raise RuntimeError("No video files found in the uploaded folder")
+            raise RuntimeError("No source video files found for this job")
 
         _log(job_path, f"Found {len(videos)} video file(s): {', '.join(v.name for v in videos)}")
 
@@ -1195,20 +1213,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         size_mb = final.stat().st_size / (1024 * 1024)
         _log(job_path, f"Done — final.mp4 is {size_mb:.1f} MB")
 
-        # Copy the finished video from ephemeral scratch onto the volume so the
-        # Download button survives redeploys. The durable copy also goes to Drive
-        # below. If the volume is full, keep serving it from scratch for now.
-        out_final = final
-        try:
-            raw_dir.mkdir(parents=True, exist_ok=True)
-            volume_final = raw_dir / "final.mp4"
-            shutil.copy2(final, volume_final)
-            out_final = volume_final
-        except Exception as e:
-            _log(job_path, f"note: finished video kept on scratch, not copied to the volume ({e})")
-
-        # Persist edl.json on the volume too, so the "Edit video" chat can read the
-        # finished cut's settings after the ephemeral scratch dir is wiped.
+        # Persist edl.json on the volume (tiny) so the "Edit video" chat can read
+        # the finished cut's settings after the scratch dir is wiped.
         try:
             edl_src = project_dir / "edl.json"
             if edl_src.exists():
@@ -1216,27 +1222,45 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         except Exception:
             pass
 
-        job = json.loads(job_path.read_text())
-        job["status"]      = "done"
-        job["output_path"] = str(out_final)
-        job["output_size"] = out_final.stat().st_size
-        job_path.write_text(json.dumps(job, indent=2))
-
         client_name = job.get("client_name", "Unknown client")
         folder      = job.get("folder_name", job_id)
-        _slack(f":white_check_mark: *{client_name}* — `{folder}` is done. {size_mb:.1f} MB ready to download.")
+        out_size    = final.stat().st_size
 
-        # ── 8. Deliver to client integrations (Notion CPS + Google Drive) ──────
-        # Best-effort and inert until the client's credentials are configured.
+        # ── 8. Deliver to Drive first. The returned link is our confirmation the
+        #      finished video is safely in Drive (full Drive backend). On success
+        #      we keep NO local copy — Drive is its home. Only if delivery does not
+        #      confirm do we fall back to keeping the file on the volume so it is
+        #      never lost and the Download button still works.
+        drive_link = None
         try:
             from integrations import delivery as _delivery
             if _delivery.is_active():
-                match_name  = job.get("folder_name") or job_id
-                client_name = job.get("client_name", "")
+                match_name = job.get("folder_name") or job_id
                 _log(job_path, f"Delivery: uploading '{match_name}' to {client_name or 'Drive'}...")
-                _delivery.deliver_finished(match_name, client_name, out_final, log=lambda m: _log(job_path, m))
+                drive_link = _delivery.deliver_finished(match_name, client_name, final, log=lambda m: _log(job_path, m))
         except Exception as _e:
             _log(job_path, f"Delivery: skipped ({_e})")
+
+        out_path = ""
+        if drive_link:
+            _log(job_path, "Finished video stored in Drive — no local copy kept")
+        else:
+            try:
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(final, raw_dir / "final.mp4")
+                out_path = str(raw_dir / "final.mp4")
+            except Exception as e:
+                _log(job_path, f"note: could not keep a local copy of the finished video ({e})")
+
+        job = json.loads(job_path.read_text())
+        job["status"]      = "done"
+        job["output_path"] = out_path
+        job["output_size"] = out_size
+        if drive_link:
+            job["drive_link"] = drive_link
+        job_path.write_text(json.dumps(job, indent=2))
+
+        _slack(f":white_check_mark: *{client_name}* — `{folder}` is done. {size_mb:.1f} MB.")
 
         # ── 9. Render intermediates are cleaned in the `finally` below, so cleanup
         #      runs on success AND on failure. A failed render must never leave its

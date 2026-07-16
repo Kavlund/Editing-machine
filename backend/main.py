@@ -362,24 +362,48 @@ async def upload_footage(
     if not client:
         raise HTTPException(404, "Client not found")
 
+    from integrations import config as _icfg, gdrive as _gdrive
+    drive_on = _icfg.gdrive_configured()
+
     job_id  = str(uuid.uuid4())
-    job_dir = UPLOADS_DIR / job_id
-    job_dir.mkdir()
+    # Receive uploads onto ephemeral scratch, not the volume. With Drive on, each
+    # file is pushed to the client's Drive Source folder and the local copy is
+    # dropped, so nothing heavy stays on the volume. Without Drive, it falls back
+    # to the volume as before.
+    scratch = Path(os.environ.get("RENDER_SCRATCH_ROOT", "/tmp/ee_render")) / "uploads" / job_id
+    scratch.mkdir(parents=True, exist_ok=True)
+    job_dir = UPLOADS_DIR / job_id  # only used if a file is kept locally
 
-    saved, total_bytes = [], 0
-
+    saved, source_drive, total_bytes = [], [], 0
     for f in files:
         safe_path = Path(f.filename).as_posix().lstrip("/")
-        dest = job_dir / safe_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-
-        async with aiofiles.open(dest, "wb") as out:
+        tmp = scratch / safe_path
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        async with aiofiles.open(tmp, "wb") as out:
             while chunk := await f.read(1024 * 1024):
                 await out.write(chunk)
-
-        size = dest.stat().st_size
+        size = tmp.stat().st_size
         total_bytes += size
-        saved.append({"path": safe_path, "size": size})
+
+        pushed = None
+        if drive_on:
+            pushed = await asyncio.to_thread(
+                _gdrive.upload_source, client["name"], tmp, Path(safe_path).name,
+                lambda m: print(f"[upload] {m}", flush=True))
+        if pushed and pushed.get("id"):
+            source_drive.append({"id": pushed["id"],
+                                 "name": pushed.get("name") or Path(safe_path).name,
+                                 "size": int(pushed.get("size") or size)})
+        else:
+            # Drive off or the push failed — keep the footage on the volume so it
+            # is never lost.
+            job_dir.mkdir(parents=True, exist_ok=True)
+            local = job_dir / safe_path
+            local.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(tmp), str(local))
+            saved.append({"path": safe_path, "size": size})
+
+    shutil.rmtree(scratch, ignore_errors=True)
 
     job = {
         "id":              job_id,
@@ -389,7 +413,8 @@ async def upload_footage(
         "notes":           notes,
         "status":          "uploaded",
         "created_at":      datetime.now().isoformat(),
-        "files":           saved,
+        "files":           saved or [{"path": s["name"], "size": s["size"]} for s in source_drive],
+        "source_drive":    source_drive,
         "total_bytes":     total_bytes,
         "upload_dir":      str(job_dir),
         "client_snapshot": client,
@@ -810,15 +835,19 @@ def download_output(job_id: str):
     if job.get("status") != "done":
         raise HTTPException(400, "Job is not complete yet")
 
-    output = Path(job["output_path"])
-    if not output.exists():
-        raise HTTPException(404, "Output file not found on disk")
+    output_path = job.get("output_path") or ""
+    if output_path and Path(output_path).exists():
+        client_name = job.get("client_name", "client").replace(" ", "_")
+        folder_name = job.get("folder_name", "video").replace(" ", "_")
+        filename = f"{client_name}_{folder_name}_final.mp4"
+        return FileResponse(output_path, media_type="video/mp4", filename=filename)
 
-    client_name = job.get("client_name", "client").replace(" ", "_")
-    folder_name = job.get("folder_name", "video").replace(" ", "_")
-    filename = f"{client_name}_{folder_name}_final.mp4"
+    # Full Drive backend: no local copy is kept — the finished video lives in
+    # Drive. Send the user straight to it.
+    if job.get("drive_link"):
+        return RedirectResponse(job["drive_link"], status_code=302)
 
-    return FileResponse(str(output), media_type="video/mp4", filename=filename)
+    raise HTTPException(404, "Finished video not found. It may still be delivering to Drive.")
 
 
 # ── Health ────────────────────────────────────────────────────────────────

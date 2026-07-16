@@ -166,7 +166,8 @@ def provision_client_folder(client_name: str, log=lambda m: None) -> str | None:
         client_folder = _find_or_create_folder(svc, client, root)
         _find_or_create_folder(svc, config.GDRIVE_EDITED_SUBFOLDER, client_folder)
         _find_or_create_folder(svc, config.GDRIVE_BROLL_SUBFOLDER, client_folder)
-        log(f"gdrive: provisioned Drive folders '{client}/{config.GDRIVE_EDITED_SUBFOLDER}' and '{client}/{config.GDRIVE_BROLL_SUBFOLDER}'")
+        _find_or_create_folder(svc, config.GDRIVE_SOURCE_SUBFOLDER, client_folder)
+        log(f"gdrive: provisioned Drive folders for '{client}' (Edited, B-roll, Source)")
         return client_folder
     except Exception as e:
         log(f"gdrive: could not provision folder for '{client_name}' ({e})")
@@ -264,6 +265,107 @@ def download_broll(client_name: str, dest_dir: Path, log=lambda m: None) -> int:
     except Exception as e:
         log(f"gdrive: B-roll pull failed ({e})")
         return 0
+
+
+_SOURCE_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mxf", ".webm", ".mts", ".m2ts"}
+
+
+def _resolve_source_folder(svc, client_name: str, log):
+    """<root>/<Client>/<Source>/ — where raw footage lives in Drive."""
+    root = _resolve_root(svc, log)
+    if not root:
+        return None
+    client = (client_name or "Unsorted").strip() or "Unsorted"
+    client_folder = _find_or_create_folder(svc, client, root)
+    return _find_or_create_folder(svc, config.GDRIVE_SOURCE_SUBFOLDER, client_folder)
+
+
+def upload_source(client_name: str, local_path: Path, display_name: str = "", log=lambda m: None):
+    """Upload a raw source clip into the client's Drive Source folder. Returns
+    {"id","name","size"} on success, or None. Never raises."""
+    if not config.gdrive_configured():
+        return None
+    try:
+        from googleapiclient.http import MediaFileUpload
+    except ImportError:
+        return None
+    try:
+        svc = _service(log)
+        if svc is None:
+            return None
+        folder_id = _resolve_source_folder(svc, client_name, log)
+        if not folder_id:
+            return None
+        name = display_name or Path(local_path).name
+        media = MediaFileUpload(str(local_path), resumable=True)
+        created = svc.files().create(
+            body={"name": name, "parents": [folder_id]},
+            media_body=media, fields="id, name, size",
+            supportsAllDrives=True).execute()
+        log(f"gdrive: uploaded source '{name}' to {client_name}/{config.GDRIVE_SOURCE_SUBFOLDER}")
+        return {"id": created["id"], "name": created.get("name", name), "size": created.get("size")}
+    except Exception as e:
+        log(f"gdrive: source upload failed ({e})")
+        return None
+
+
+def download_file(file_id: str, dest_path: Path, log=lambda m: None) -> bool:
+    """Download a Drive file by id to dest_path. Returns True on success."""
+    if not config.gdrive_configured() or not file_id:
+        return False
+    try:
+        from googleapiclient.http import MediaIoBaseDownload
+    except ImportError:
+        return False
+    try:
+        svc = _service(log)
+        if svc is None:
+            return False
+        import io
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        req = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
+        with io.FileIO(str(dest_path), "wb") as buf:
+            downloader = MediaIoBaseDownload(buf, req)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+        return True
+    except Exception as e:
+        log(f"gdrive: download of {file_id} failed ({e})")
+        return False
+
+
+def list_source(client_name: str, log=lambda m: None) -> list:
+    """List raw clips in the client's Drive Source folder. Returns
+    [{"id","name","size","modifiedTime"}]. Safe [] if unset."""
+    if not config.gdrive_configured():
+        return []
+    try:
+        svc = _service(log)
+        if svc is None:
+            return []
+        folder_id = _resolve_source_folder(svc, client_name, log)
+        if not folder_id:
+            return []
+        out, page_token = [], None
+        q = (f"'{folder_id}' in parents and trashed = false and "
+             f"mimeType != 'application/vnd.google-apps.folder'")
+        while True:
+            res = svc.files().list(
+                q=q, spaces="drive",
+                fields="nextPageToken, files(id, name, size, modifiedTime)",
+                pageSize=100, supportsAllDrives=True, includeItemsFromAllDrives=True,
+                pageToken=page_token).execute()
+            for f in res.get("files", []):
+                if Path(f.get("name", "")).suffix.lower() in _SOURCE_EXTS:
+                    out.append(f)
+            page_token = res.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+    except Exception as e:
+        log(f"gdrive: could not list source ({e})")
+        return []
 
 
 def list_broll(client_name: str, log=lambda m: None) -> list:

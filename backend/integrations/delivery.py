@@ -51,6 +51,10 @@ def deliver_finished(name: str, client_name: str, final_path: Path, log=lambda m
     if config.slack_configured():
         slack.notify_finished(client_name, name, link or "", log=log)
 
+    # The Drive link (truthy) is our confirmation the finished video is safely
+    # stored in Drive — the caller uses it to drop the local copy.
+    return link
+
 
 def on_client_created(client_name: str, log=lambda m: None):
     """Called when a new client is added — provisions their Drive folder up front."""

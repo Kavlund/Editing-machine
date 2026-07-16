@@ -39,6 +39,9 @@ GDRIVE_EDITED_SUBFOLDER     = os.environ.get("GDRIVE_EDITED_SUBFOLDER", "Edited"
 # Per-client B-roll folder. The client drops B-roll clips here in their Drive and
 # the machine pulls them at render time (no in-app upload needed).
 GDRIVE_BROLL_SUBFOLDER      = os.environ.get("GDRIVE_BROLL_SUBFOLDER", "B-roll")
+# Per-client Source folder — raw footage lives here in Drive (uploaded through the
+# app or dropped in directly), so nothing heavy is stored in the app itself.
+GDRIVE_SOURCE_SUBFOLDER     = os.environ.get("GDRIVE_SOURCE_SUBFOLDER", "Source")
 # Optional flat fallback: drop everything straight into this one folder (no per-client).
 GDRIVE_FINISHED_FOLDER_ID   = os.environ.get("GDRIVE_FINISHED_FOLDER_ID", "")
 GDRIVE_SHARE_ANYONE         = os.environ.get("GDRIVE_SHARE_ANYONE", "1") == "1"  # link-shareable
