@@ -108,6 +108,14 @@
           Start Processing
         </button>
 
+        <!-- Or pull footage straight from the client's Drive Source folder -->
+        <button class="btn btn-ghost btn-full btn-sm" id="drive-pull-btn" style="margin-top:8px;">Or pull footage from Google Drive</button>
+        <div id="drive-picker" hidden style="margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:12px;">
+          <div id="drive-picker-list" style="display:flex;flex-direction:column;gap:7px;max-height:220px;overflow-y:auto;"></div>
+          <input type="text" id="drive-job-name" placeholder="Job name" style="width:100%;margin-top:10px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit;font-size:.85rem;box-sizing:border-box;">
+          <button class="btn btn-primary btn-full btn-sm" id="drive-create-btn" style="margin-top:8px;" disabled>Create job from selected clips</button>
+        </div>
+
       </div>
 
       <!-- Jobs -->

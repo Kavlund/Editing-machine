@@ -434,6 +434,63 @@ async def upload_footage(
     return job
 
 
+@app.get("/api/clients/{client_id}/drive-source")
+def list_drive_source(client_id: str):
+    """Raw clips in the client's Drive Source folder — powers the Pull from Drive picker."""
+    c = get_client(client_id)
+    if not c:
+        raise HTTPException(404, "Client not found")
+    try:
+        from integrations import config as _icfg, gdrive as _gdrive
+        if not _icfg.gdrive_configured():
+            return {"available": False, "clips": []}
+        clips = _gdrive.list_source(c["name"], log=lambda m: print(f"[drive-source] {m}", flush=True))
+        return {"available": True, "clips": [
+            {"id": f["id"], "name": f.get("name", ""), "size": int(f.get("size") or 0)} for f in clips]}
+    except Exception as e:
+        return {"available": False, "clips": [], "error": str(e)}
+
+
+@app.post("/api/jobs/from-drive")
+async def create_job_from_drive(request: Request):
+    """Create a job whose source footage is clips already sitting in the client's
+    Drive Source folder — no upload needed."""
+    body = await request.json()
+    c = get_client(body.get("client_id", ""))
+    if not c:
+        raise HTTPException(404, "Client not found")
+    selected = body.get("clips") or []
+    source_drive = [{"id": s["id"], "name": s.get("name") or f"{s['id']}.mp4",
+                     "size": int(s.get("size") or 0)} for s in selected if s.get("id")]
+    if not source_drive:
+        raise HTTPException(400, "No Drive clips selected")
+
+    job_id = str(uuid.uuid4())
+    job = {
+        "id":              job_id,
+        "client_id":       c["id"],
+        "client_name":     c["name"],
+        "folder_name":     (body.get("folder_name") or "untitled").strip() or "untitled",
+        "notes":           (body.get("notes") or "").strip(),
+        "status":          "uploaded",
+        "created_at":      datetime.now().isoformat(),
+        "files":           [{"path": s["name"], "size": s["size"]} for s in source_drive],
+        "source_drive":    source_drive,
+        "total_bytes":     sum(s["size"] for s in source_drive),
+        "upload_dir":      str(UPLOADS_DIR / job_id),
+        "client_snapshot": c,
+        "elevenlabs_key":  ELEVENLABS_API_KEY,
+    }
+    (JOBS_DIR / f"{job_id}.json").write_text(json.dumps(job, indent=2))
+    try:
+        from integrations import delivery as _delivery
+        if _delivery.is_active():
+            await asyncio.to_thread(_delivery.on_upload, job["folder_name"], lambda m: print(f"[integrations] {m}", flush=True))
+    except Exception as e:
+        print(f"[integrations] on_upload skipped: {e}", flush=True)
+    return job
+
+
 # ── Jobs ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/jobs")

@@ -306,6 +306,60 @@ function setProgress(pct) {
   els.progressLabel.textContent = pct < 100 ? `Uploading… ${pct}%` : 'Done';
 }
 
+// ── Pull source footage straight from the client's Drive Source folder ──────
+(function () {
+  const btn = $('drive-pull-btn'), panel = $('drive-picker');
+  const list = $('drive-picker-list'), nameInput = $('drive-job-name'), createBtn = $('drive-create-btn');
+  if (!btn) return;
+  const note = (t) => `<p class="empty-state" style="font-size:.8rem">${t}</p>`;
+  const selected = () => [...list.querySelectorAll('input:checked')].map(c =>
+    ({ id: c.dataset.id, name: c.dataset.name, size: Number(c.dataset.size) }));
+  function refreshCreate() {
+    const s = selected();
+    createBtn.disabled = !(s.length && state.clientId);
+    if (s.length && !nameInput.value) nameInput.value = s[0].name.replace(/\.[^.]+$/, '');
+  }
+  btn.addEventListener('click', async () => {
+    if (!state.clientId) { toast('Pick a client first', 'error'); return; }
+    panel.hidden = !panel.hidden;
+    if (panel.hidden) return;
+    list.innerHTML = note('Loading the Drive folder…');
+    try {
+      const d = await (await fetch(`/api/clients/${state.clientId}/drive-source`, { cache: 'no-store' })).json();
+      if (!d.available) { list.innerHTML = note('Google Drive is not connected.'); return; }
+      if (!d.clips.length) { list.innerHTML = note('No clips in this creator\'s Drive Source folder yet.'); return; }
+      list.innerHTML = d.clips.map(c =>
+        `<label style="display:flex;align-items:center;gap:8px;font-size:.85rem;cursor:pointer;">
+           <input type="checkbox" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-size="${c.size}">
+           <span style="flex:1;">${escapeHtml(c.name)}</span>
+           <span style="color:var(--text-dim);">${formatBytes(c.size)}</span>
+         </label>`).join('');
+      list.querySelectorAll('input').forEach(c => c.addEventListener('change', refreshCreate));
+    } catch (e) { list.innerHTML = note('Could not load the Drive folder.'); }
+  });
+  createBtn.addEventListener('click', async () => {
+    const clips = selected();
+    if (!clips.length) return;
+    createBtn.disabled = true; createBtn.textContent = 'Creating…';
+    try {
+      const res = await fetch('/api/jobs/from-drive', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_id: state.clientId,
+          folder_name: nameInput.value.trim() || clips[0].name,
+          notes: els.jobNotes.value.trim(), clips,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      const job = await res.json();
+      toast(`Job created for ${job.client_name}`, 'success');
+      panel.hidden = true; nameInput.value = ''; els.jobNotes.value = '';
+      loadJobs();
+    } catch (e) { toast('Could not create job: ' + e.message, 'error'); }
+    createBtn.disabled = false; createBtn.textContent = 'Create job from selected clips';
+  });
+})();
+
 function uploadWithProgress(formData) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
