@@ -1080,6 +1080,101 @@ def free_space():
     return {"ok": True, "freed_mb": round(freed / 1e6), "free_gb": free_gb}
 
 
+# ── Files manager — browse and selectively delete what's on the volume ───────
+# Deletion is limited to the uploads / B-roll / style-ref areas; the OAuth token,
+# job metadata and clients.json are never listed or deletable here.
+def _file_roots():
+    return [UPLOADS_DIR.resolve(), BROLL_DIR.resolve(), STYLE_DIR.resolve()]
+
+
+@app.get("/api/admin/files")
+def list_stored_files():
+    """Everything stored on the volume, grouped by video / client, with sizes."""
+    clients = {c["id"]: c["name"] for c in load_clients()}
+    jobs = {}
+    for f in JOBS_DIR.glob("*.json"):
+        try:
+            j = json.loads(f.read_text())
+            jobs[j["id"]] = {"name": j.get("folder_name", "untitled"), "client": j.get("client_name", "")}
+        except Exception:
+            pass
+
+    def _rel(p):
+        return str(p.relative_to(DATA_ROOT))
+
+    groups = []
+
+    def _collect(root, label_fn, kind):
+        if not root.exists():
+            return
+        for sub in sorted(root.iterdir()):
+            if not sub.is_dir():
+                continue
+            files = []
+            for fp in sorted(sub.rglob("*")):
+                if fp.is_file():
+                    try:
+                        sz = fp.stat().st_size
+                    except Exception:
+                        sz = 0
+                    files.append({"path": _rel(fp), "name": fp.name, "size": sz})
+            if files:
+                groups.append({"kind": kind, "label": label_fn(sub.name),
+                               "size": sum(x["size"] for x in files), "files": files})
+
+    def _job_label(jid):
+        info = jobs.get(jid)
+        if not info:
+            return f"Video: {jid[:8]}…"
+        return f"Video: {info['name']}" + (f" · {info['client']}" if info['client'] else "")
+
+    _collect(UPLOADS_DIR, _job_label, "job")
+    _collect(BROLL_DIR, lambda cid: f"B-roll: {clients.get(cid, cid[:8] + '…')}", "broll")
+    _collect(STYLE_DIR, lambda cid: f"Style refs: {clients.get(cid, cid[:8] + '…')}", "style")
+    groups.sort(key=lambda g: g["size"], reverse=True)
+
+    total = free = None
+    try:
+        du = shutil.disk_usage(str(DATA_ROOT))
+        total, free = du.total, du.free
+    except Exception:
+        pass
+    return {"groups": groups, "total_bytes": total, "free_bytes": free}
+
+
+@app.post("/api/admin/files/delete")
+async def delete_stored_files(request: Request):
+    """Delete the exact files the user selected. Each path is resolved and must sit
+    inside the uploads / B-roll / style-ref roots — nothing else can be touched."""
+    body = await request.json()
+    paths = body.get("paths") or []
+    roots = _file_roots()
+    freed = deleted = 0
+    for rel in paths:
+        try:
+            p = (DATA_ROOT / rel).resolve()
+            if not any(str(p) == str(r) or str(p).startswith(str(r) + os.sep) for r in roots):
+                continue  # outside the allowed areas — skip
+            if p.is_file():
+                freed += p.stat().st_size
+                p.unlink()
+                deleted += 1
+                # tidy up now-empty parent folders
+                try:
+                    if p.parent not in roots and not any(p.parent.iterdir()):
+                        p.parent.rmdir()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    free = None
+    try:
+        free = shutil.disk_usage(str(DATA_ROOT)).free
+    except Exception:
+        pass
+    return {"ok": True, "deleted": deleted, "freed_mb": round(freed / 1e6), "free_bytes": free}
+
+
 # ── AI Chat ───────────────────────────────────────────────────────────────
 
 def _job_edl_path(job_id: str) -> Optional[Path]:

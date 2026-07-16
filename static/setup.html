@@ -113,6 +113,24 @@
       </div>
     </div>
 
+    <!-- Files manager -->
+    <div class="step" id="files-panel" style="display:none;">
+      <div class="step-head">
+        <div class="num">☰</div>
+        <h2>Files <span id="files-summary" style="color:var(--muted);font-weight:400;font-size:13px;"></span></h2>
+      </div>
+      <div class="body">
+        <p style="margin:0 0 12px;color:var(--muted);font-size:14px;">Everything stored on the volume, biggest first. Tick what you want gone and delete it. Footage and finished videos already in Drive are safe there; this only clears local copies.</p>
+        <div id="files-list" style="display:flex;flex-direction:column;gap:10px;max-height:340px;overflow-y:auto;"></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap;">
+          <button id="files-delete-btn" style="display:inline-flex;align-items:center;gap:8px;background:#f0736a;color:#230b09;font-weight:650;font-size:14px;border:none;cursor:pointer;padding:10px 16px;border-radius:10px;opacity:.5;" disabled>Delete selected</button>
+          <span id="files-selected" style="font-size:12.5px;color:var(--muted);"></span>
+          <button id="files-refresh-btn" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:12.5px;text-decoration:underline;">Refresh</button>
+        </div>
+        <p id="files-note" style="margin:10px 0 0;font-size:12.5px;color:var(--muted);"></p>
+      </div>
+    </div>
+
     <!-- 1 Google Drive -->
     <div class="step">
       <div class="step-head">
@@ -288,6 +306,61 @@
           btn.disabled = false; loadStorage();
         }).catch(function(e){ note.textContent = "Failed: " + e; btn.disabled = false; });
     });
+  })();
+
+  // ── Files manager ─────────────────────────────────────────────────────
+  (function(){
+    var panel=document.getElementById("files-panel"), listEl=document.getElementById("files-list");
+    var summary=document.getElementById("files-summary"), delBtn=document.getElementById("files-delete-btn");
+    var selEl=document.getElementById("files-selected"), note=document.getElementById("files-note");
+    var refreshBtn=document.getElementById("files-refresh-btn");
+    if(!panel) return;
+    function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+    function att(s){ return esc(s).replace(/"/g,"&quot;"); }
+    function fmt(b){ if(b==null) return ""; var u=["B","KB","MB","GB"],i=0,n=b; while(n>=1024&&i<u.length-1){n/=1024;i++;} return (n<10&&i>0?n.toFixed(1):Math.round(n))+" "+u[i]; }
+    function refreshSel(){
+      var cbs=[].slice.call(listEl.querySelectorAll("input.file-cb:checked"));
+      var total=cbs.reduce(function(s,c){return s+Number(c.dataset.size||0);},0);
+      delBtn.disabled=!cbs.length; delBtn.style.opacity=cbs.length?"1":".5";
+      selEl.textContent=cbs.length?(cbs.length+" file(s), "+fmt(total)):"";
+    }
+    function load(){
+      panel.style.display=""; listEl.innerHTML='<p style="color:var(--muted);font-size:.85rem;">Loading…</p>';
+      fetch("/api/admin/files",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
+        summary.textContent = d.free_bytes!=null ? ("— "+fmt(d.free_bytes)+" free of "+fmt(d.total_bytes)) : "";
+        if(!d.groups || !d.groups.length){ listEl.innerHTML='<p style="color:var(--muted);font-size:.85rem;">Nothing stored on the volume.</p>'; refreshSel(); return; }
+        listEl.innerHTML=d.groups.map(function(g,gi){
+          return '<div style="border:1px solid var(--card-line);border-radius:9px;padding:10px 12px;">'
+            +'<label style="display:flex;align-items:center;gap:8px;font-weight:650;font-size:13.5px;cursor:pointer;">'
+            +'<input type="checkbox" class="group-cb" data-g="'+gi+'"><span style="flex:1;">'+esc(g.label)+'</span>'
+            +'<span style="color:var(--muted);font-weight:400;">'+fmt(g.size)+'</span></label>'
+            +'<div style="display:flex;flex-direction:column;gap:5px;margin-top:8px;padding-left:22px;">'
+            +g.files.map(function(f){ return '<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;color:var(--muted);">'
+              +'<input type="checkbox" class="file-cb" data-g="'+gi+'" data-path="'+att(f.path)+'" data-size="'+f.size+'">'
+              +'<span style="flex:1;">'+esc(f.name)+'</span><span>'+fmt(f.size)+'</span></label>'; }).join("")
+            +'</div></div>';
+        }).join("");
+        [].forEach.call(listEl.querySelectorAll("input.file-cb"),function(c){c.addEventListener("change",refreshSel);});
+        [].forEach.call(listEl.querySelectorAll("input.group-cb"),function(gc){gc.addEventListener("change",function(){
+          [].forEach.call(listEl.querySelectorAll('input.file-cb[data-g="'+gc.dataset.g+'"]'),function(fc){fc.checked=gc.checked;});
+          refreshSel();
+        });});
+        refreshSel();
+      }).catch(function(){ listEl.innerHTML='<p style="color:var(--muted);font-size:.85rem;">Could not load files.</p>'; });
+    }
+    delBtn.addEventListener("click",function(){
+      var paths=[].slice.call(listEl.querySelectorAll("input.file-cb:checked")).map(function(c){return c.dataset.path;});
+      if(!paths.length) return;
+      if(!confirm("Delete "+paths.length+" file(s)? This removes the local copies. Footage and finished videos in Drive are not affected.")) return;
+      delBtn.disabled=true; note.style.color="var(--muted)"; note.textContent="Deleting…";
+      fetch("/api/admin/files/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paths:paths})})
+        .then(function(r){return r.json();}).then(function(r){
+          note.style.color="var(--green)"; note.textContent="Deleted "+r.deleted+" file(s), freed "+r.freed_mb+" MB.";
+          load();
+        }).catch(function(e){ note.textContent="Failed: "+e; delBtn.disabled=false; });
+    });
+    refreshBtn.addEventListener("click",load);
+    load();
   })();
 </script>
 </body>
