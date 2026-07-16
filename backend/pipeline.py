@@ -1260,7 +1260,9 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             job["drive_link"] = drive_link
         job_path.write_text(json.dumps(job, indent=2))
 
-        _slack(f":white_check_mark: *{client_name}* — `{folder}` is done. {size_mb:.1f} MB.")
+        # Exactly one Slack message per finished video, with the Drive link.
+        _slack(f":white_check_mark: *{client_name}* — `{folder}` is done."
+               + (f"\n{drive_link}" if drive_link else f" {size_mb:.1f} MB."))
 
         # ── 9. Render intermediates are cleaned in the `finally` below, so cleanup
         #      runs on success AND on failure. A failed render must never leave its
@@ -1280,7 +1282,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         job = json.loads(job_path.read_text())
         client_name = job.get("client_name", "Unknown client")
         folder      = job.get("folder_name", job_id)
-        _slack(f":x: *{client_name}* — `{folder}` failed: {str(exc)[:200]}")
+        # Exactly one Slack message when a video fails.
+        _slack(f":x: *{client_name}* — `{folder}` failed. {str(exc)[:140]}")
 
     finally:
         # The render scratch dir is entirely ephemeral, so remove it whole on

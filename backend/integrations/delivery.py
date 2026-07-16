@@ -9,7 +9,7 @@ never break an upload or a render. When nothing is configured, they no-op.
 from __future__ import annotations
 from pathlib import Path
 
-from . import config, notion_cps, gdrive, slack
+from . import config, notion_cps, gdrive
 
 
 def on_upload(name: str, log=lambda m: None):
@@ -29,8 +29,7 @@ def deliver_finished(name: str, client_name: str, final_path: Path, log=lambda m
       notion_upload -> native video embedded in the Notion card
       both          -> Drive upload + native embed
     """
-    if not (config.gdrive_configured() or config.notion_configured()
-            or config.slack_configured()):
+    if not (config.gdrive_configured() or config.notion_configured()):
         return
 
     mode = (config.NOTION_DELIVERY_MODE or "drive_link").lower()
@@ -47,12 +46,9 @@ def deliver_finished(name: str, client_name: str, final_path: Path, log=lambda m
         else:  # drive_link
             notion_cps.attach_video(name, link or "", log=log)
 
-    # Slack ping — "<Client> — '<video>' is done", with the Drive link if we have one.
-    if config.slack_configured():
-        slack.notify_finished(client_name, name, link or "", log=log)
-
     # The Drive link (truthy) is our confirmation the finished video is safely
-    # stored in Drive — the caller uses it to drop the local copy.
+    # stored in Drive — the caller uses it to drop the local copy. The single
+    # Slack ping is sent by the pipeline (one message per finished / failed video).
     return link
 
 
