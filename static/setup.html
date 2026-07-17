@@ -74,6 +74,18 @@
   .secnav a:hover{color:#fff;border-color:var(--muted);}
   .section-hdr{font-size:19px;color:#fff;font-weight:700;letter-spacing:-.01em;margin:36px 0 4px;}
   .section-sub{color:var(--muted);font-size:14px;margin:0 0 16px;line-height:1.5;}
+  /* Our own confirm — the browser's can be permanently suppressed by the user
+     ticking "prevent this page from creating additional dialogs". */
+  .cfm-overlay{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.62);backdrop-filter:blur(4px);
+    display:flex;align-items:center;justify-content:center;padding:20px;}
+  .cfm-box{background:var(--card);border:1px solid var(--card-line);border-radius:14px;padding:22px;
+    max-width:430px;width:100%;box-shadow:0 24px 70px rgba(0,0,0,.6);}
+  .cfm-msg{margin:0 0 18px;color:var(--body);font-size:14px;line-height:1.55;}
+  .cfm-actions{display:flex;gap:10px;justify-content:flex-end;}
+  .cfm-yes{background:#f0736a;color:#230b09;border:none;font-weight:650;padding:8px 16px;border-radius:9px;
+    cursor:pointer;font-size:13px;font-family:inherit;}
+  .cfm-no{background:none;border:1px solid var(--card-line);color:var(--muted);padding:8px 16px;
+    border-radius:9px;cursor:pointer;font-size:13px;font-family:inherit;}
   .owner{font-family:var(--mono);font-size:10px;letter-spacing:.05em;text-transform:uppercase;padding:3px 9px;border-radius:7px;white-space:nowrap;}
   .owner.you{background:var(--green-soft);color:#8ff0b6;border:1px solid rgba(67,209,127,.35);}
   .owner.editor{background:rgba(255,255,255,.05);color:var(--muted);border:1px solid var(--card-line);}
@@ -227,6 +239,29 @@
     });
   });
 
+  // Our own confirm. The browser's confirm() can be permanently switched off by
+  // the user ticking "prevent this page from creating additional dialogs", after
+  // which it silently returns false and every delete stops working.
+  function cfm(message, yesLabel){
+    return new Promise(function(resolve){
+      var o=document.createElement("div"); o.className="cfm-overlay";
+      o.innerHTML='<div class="cfm-box" role="dialog" aria-modal="true"><p class="cfm-msg"></p>'
+        +'<div class="cfm-actions"><button class="cfm-no" data-a="no">Cancel</button>'
+        +'<button class="cfm-yes" data-a="yes"></button></div></div>';
+      o.querySelector(".cfm-msg").textContent=message;
+      o.querySelector(".cfm-yes").textContent=yesLabel||"Delete";
+      function done(v){ document.removeEventListener("keydown",onKey); o.remove(); resolve(v); }
+      function onKey(e){ if(e.key==="Escape") done(false); else if(e.key==="Enter") done(true); }
+      o.addEventListener("click",function(e){
+        if(e.target===o) return done(false);
+        var b=e.target.closest("[data-a]"); if(b) done(b.dataset.a==="yes");
+      });
+      document.addEventListener("keydown",onKey);
+      document.body.appendChild(o);
+      setTimeout(function(){ o.querySelector(".cfm-yes").focus(); },20);
+    });
+  }
+
   function setBadge(id, on){
     var b=document.getElementById(id); if(!b) return;
     b.classList.toggle("on", on); b.classList.toggle("wait", !on);
@@ -324,8 +359,8 @@
         }).catch(function(){});
     }
     loadStorage();
-    btn.addEventListener("click", function(){
-      if(!confirm("Free up space now? This removes only regenerable render leftovers. Uploaded footage and finished videos are kept.")) return;
+    btn.addEventListener("click", async function(){
+      if(!(await cfm("Free up space now? This removes only regenerable render leftovers. Uploaded footage and finished videos are kept.", "Free up space"))) return;
       btn.disabled = true; note.style.color = "var(--muted)"; note.textContent = "Working…";
       fetch("/api/admin/free-space",{method:"POST"})
         .then(function(r){ return r.json(); })
@@ -377,10 +412,10 @@
         refreshSel();
       }).catch(function(){ listEl.innerHTML='<p style="color:var(--muted);font-size:.85rem;">Could not load files.</p>'; });
     }
-    delBtn.addEventListener("click",function(){
+    delBtn.addEventListener("click",async function(){
       var paths=[].slice.call(listEl.querySelectorAll("input.file-cb:checked")).map(function(c){return c.dataset.path;});
       if(!paths.length) return;
-      if(!confirm("Delete "+paths.length+" file(s)? This removes the local copies. Footage and finished videos in Drive are not affected.")) return;
+      if(!(await cfm("Delete "+paths.length+" file(s)? This removes the local copies. Footage and finished videos in Drive are not affected.", "Delete files"))) return;
       delBtn.disabled=true; note.style.color="var(--muted)"; note.textContent="Deleting…";
       fetch("/api/admin/files/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paths:paths})})
         .then(function(r){return r.json();}).then(function(r){

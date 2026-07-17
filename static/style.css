@@ -970,6 +970,66 @@ input[type="color"] {
   flex-shrink: 0;
 }
 
+/* ── Confirm dialog ────────────────────────────────────────────────────────
+   Our own, never the browser's confirm(): the browser lets you tick "prevent
+   this page from creating additional dialogs", after which confirm() silently
+   returns false and every delete stops working. This can't be suppressed. */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, .62);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: rise .14s ease-out;
+}
+.confirm-box {
+  background: var(--surface);
+  border: 1px solid var(--border-focus);
+  border-radius: 14px;
+  padding: 22px;
+  max-width: 430px;
+  width: 100%;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .6);
+}
+.confirm-msg {
+  margin: 0 0 18px;
+  color: var(--text);
+  font-size: .88rem;
+  line-height: 1.55;
+}
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.confirm-danger {
+  background: var(--red);
+  color: #2a0a10;
+  border: none;
+  font-weight: 650;
+  padding: 8px 16px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: .82rem;
+  font-family: inherit;
+}
+.confirm-danger:hover { filter: brightness(1.08); }
+.confirm-cancel {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  padding: 8px 16px;
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: .82rem;
+  font-family: inherit;
+}
+.confirm-cancel:hover { color: var(--text); border-color: var(--border-focus); }
+
 /* Status pill + the quick delete X */
 .job-badge-row {
   display: flex;

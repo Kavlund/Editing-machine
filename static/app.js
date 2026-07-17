@@ -116,6 +116,46 @@ const api = {
   },
 };
 
+// ── Confirm dialog ─────────────────────────────────────────────────────────
+// Deliberately NOT the browser's confirm(): the browser offers "prevent this
+// page from creating additional dialogs", and once that's ticked confirm()
+// silently returns false forever — every delete then quietly does nothing.
+// This one is ours, so it can never be suppressed.
+function confirmDialog(message, confirmLabel = 'Delete') {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-overlay';
+    overlay.innerHTML = `
+      <div class="confirm-box" role="dialog" aria-modal="true">
+        <p class="confirm-msg"></p>
+        <div class="confirm-actions">
+          <button class="confirm-cancel" data-a="no">Cancel</button>
+          <button class="confirm-danger" data-a="yes"></button>
+        </div>
+      </div>`;
+    overlay.querySelector('.confirm-msg').textContent = message;
+    overlay.querySelector('.confirm-danger').textContent = confirmLabel;
+
+    const done = (v) => {
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve(v);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') done(false);
+      else if (e.key === 'Enter') done(true);
+    };
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) return done(false);
+      const b = e.target.closest('[data-a]');
+      if (b) done(b.dataset.a === 'yes');
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(overlay);
+    setTimeout(() => overlay.querySelector('.confirm-danger').focus(), 20);
+  });
+}
+
 // ── Utilities ────────────────────────────────────────────────────────────
 
 function formatBytes(bytes) {
@@ -429,7 +469,7 @@ function renderClientsDrawer() {
 }
 
 async function deleteClient(id, name) {
-  if (!confirm(`Delete client "${name}"? This cannot be undone.`)) return;
+  if (!await confirmDialog(`Delete client "${name}"? This cannot be undone.`, 'Delete client')) return;
   try {
     await api.del(`/api/clients/${id}`);
     if (state.clientId === id) {
@@ -1039,7 +1079,7 @@ window.toggleJobLog = toggleJobLog;
 
 // ── Deleting jobs ─────────────────────────────────────────────────────────
 window.deleteJob = async function (jobId) {
-  if (!confirm('Delete this job and its files? Finished videos already in Drive are not affected.')) return;
+  if (!await confirmDialog('Delete this job and its files? Finished videos already in Drive are not affected.', 'Delete job')) return;
   try {
     await api.del(`/api/jobs/${jobId}`);
     toast('Job deleted', 'success');
@@ -1048,7 +1088,7 @@ window.deleteJob = async function (jobId) {
 };
 
 async function clearFailedJobs() {
-  if (!confirm('Delete every failed and cancelled job, and their files? Finished videos in Drive are not affected.')) return;
+  if (!await confirmDialog('Delete every failed and cancelled job, and their files? Finished videos in Drive are not affected.', 'Clear failed')) return;
   try {
     const r = await api.post('/api/jobs/clear', { statuses: ['failed', 'cancelled'] });
     toast(`Deleted ${r.deleted} job(s)` + (r.freed_mb ? `, freed ${r.freed_mb} MB` : ''), 'success');
