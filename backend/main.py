@@ -9,7 +9,7 @@ from typing import List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import aiofiles
 
@@ -27,6 +27,13 @@ DASHBOARD_PASSWORD  = os.environ.get("DASHBOARD_PASSWORD", "")
 SECRET_KEY          = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 ELEVENLABS_API_KEY  = os.environ.get("ELEVENLABS_API_KEY", "")
 ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
+
+# ── White-label branding ──────────────────────────────────────────────────
+# One codebase, many deployments. Everything brand-specific comes from env vars
+# so the same code serves the client's instance and our own internal one — no
+# fork, no drift. BRAND_LOGO points at any file in static/ (or an external URL).
+BRAND_NAME = os.environ.get("BRAND_NAME", "Acquisition Empire")
+BRAND_LOGO = os.environ.get("BRAND_LOGO", "/logo.png")
 
 app = FastAPI(title="Talking Head Editor")
 
@@ -136,9 +143,39 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+def _render_page(filename: str) -> HTMLResponse:
+    """Serve a page with the brand substituted in. The static mount can't
+    template, so every brand-bearing page is served through here instead."""
+    html = (BASE / "static" / filename).read_text()
+    html = html.replace("__BRAND_NAME__", BRAND_NAME).replace("__BRAND_LOGO__", BRAND_LOGO)
+    return HTMLResponse(html)
+
+
 @app.get("/login")
 def login_page():
-    return FileResponse(str(BASE / "static" / "login.html"))
+    return _render_page("login.html")
+
+
+# These must stay ABOVE the StaticFiles mount at the bottom of this file, or the
+# mount would serve the raw, un-branded files instead.
+@app.get("/")
+def index_page():
+    return _render_page("index.html")
+
+
+@app.get("/index.html")
+def index_page_alias():
+    return _render_page("index.html")
+
+
+@app.get("/setup.html")
+def setup_page():
+    return _render_page("setup.html")
+
+
+@app.get("/api/brand")
+def brand_info():
+    return {"name": BRAND_NAME, "logo": BRAND_LOGO}
 
 
 @app.post("/api/auth/login")
@@ -1243,7 +1280,7 @@ def _job_edl_path(job_id: str) -> Optional[Path]:
     return p if p.exists() else None
 
 
-_CHAT_SYSTEM = """You are a video editing assistant inside the Acquisition Empire Editing Machine — a dashboard that produces vertical social media videos (1080×1920 @30fps) from raw talking-head footage.
+_CHAT_SYSTEM = """You are a video editing assistant inside the __BRAND__ Editing Machine — a dashboard that produces vertical social media videos (1080×1920 @30fps) from raw talking-head footage.
 
 You help clients adjust their editing settings using plain English. You can read and write client profiles.
 
@@ -1333,7 +1370,7 @@ _CHAT_TOOLS = [
 ]
 
 
-_JOB_CHAT_SYSTEM = """You are a video editing assistant inside the Acquisition Empire Editing Machine.
+_JOB_CHAT_SYSTEM = """You are a video editing assistant inside the __BRAND__ Editing Machine.
 
 You are editing ONE SPECIFIC VIDEO — not the client's default settings.
 Every change you make goes ONLY to this job's EDL and triggers an automatic re-render of this video.
@@ -1613,7 +1650,7 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
 
     if job_id:
         # Job-scoped mode: only edit this video's EDL
-        system = _JOB_CHAT_SYSTEM
+        system = _JOB_CHAT_SYSTEM.replace("__BRAND__", BRAND_NAME)
         job_path = JOBS_DIR / f"{job_id}.json"
         if job_path.exists():
             j = json.loads(job_path.read_text())
@@ -1621,7 +1658,7 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
         tools = _JOB_CHAT_TOOLS
     else:
         # Global mode: edit client default settings
-        system = _CHAT_SYSTEM
+        system = _CHAT_SYSTEM.replace("__BRAND__", BRAND_NAME)
         if client_id:
             c = get_client(client_id)
             if c:
