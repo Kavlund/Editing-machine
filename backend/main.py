@@ -472,7 +472,13 @@ async def create_job_from_drive(request: Request):
 def list_jobs():
     jobs = []
     for f in sorted(JOBS_DIR.glob("*.json"), reverse=True)[:20]:
-        j = json.loads(f.read_text())
+        try:
+            j = json.loads(f.read_text())
+        except Exception as e:
+            # A half-written or corrupt job file (e.g. the container died mid-write)
+            # must never take down the whole jobs list.
+            print(f"[jobs] skipping unreadable {f.name}: {e}", flush=True)
+            continue
         j.pop("elevenlabs_key", None)  # never expose keys in list response
         jobs.append(j)
     return jobs
