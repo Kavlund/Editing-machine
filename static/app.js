@@ -338,8 +338,10 @@ function setProgress(pct) {
     } catch (e) { list.innerHTML = note('Could not load the Drive folder.'); }
   });
   createBtn.addEventListener('click', async () => {
+    // Never bail silently — always say why.
     const clips = selected();
-    if (!clips.length) return;
+    if (!clips.length) { toast('Tick at least one clip first', 'error'); return; }
+    if (!state.clientId) { toast('Pick a client first', 'error'); return; }
     createBtn.disabled = true; createBtn.textContent = 'Creating…';
     try {
       const res = await fetch('/api/jobs/from-drive', {
@@ -350,13 +352,19 @@ function setProgress(pct) {
           notes: els.jobNotes.value.trim(), clips,
         }),
       });
-      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Failed'); }
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail || `server returned ${res.status}`);
+      }
       const job = await res.json();
-      toast(`Job created for ${job.client_name}`, 'success');
+      // One press: pull from Drive AND start editing straight away.
+      createBtn.textContent = 'Starting…';
+      await api.post(`/api/jobs/${job.id}/run`, { instructions: '', broll_count: 'ai' });
+      toast(`Editing started for ${job.client_name}`, 'success');
       panel.hidden = true; nameInput.value = ''; els.jobNotes.value = '';
       loadJobs();
-    } catch (e) { toast('Could not create job: ' + e.message, 'error'); }
-    createBtn.disabled = false; createBtn.textContent = 'Create job from selected clips';
+    } catch (e) { toast('Could not start: ' + (e.message || e), 'error'); }
+    createBtn.disabled = false; createBtn.textContent = 'Create job and start editing';
   });
 })();
 
