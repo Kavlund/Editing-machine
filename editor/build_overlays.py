@@ -41,9 +41,32 @@ DEFAULT_STOP = {
 PHRASE_END = set(".,!?;:")
 
 
-def font(spec, size):
-    path, idx = spec
-    return ImageFont.truetype(path, size, index=idx)
+def font(spec, size, weight=None):
+    """Load a font for drawing.
+
+    Two safeguards: a broken font file never kills the render (we fall back to a
+    real system font), and `weight` picks the right instance from a VARIABLE font
+    — Oswald[wght]/Caveat[wght] open at Regular unless told otherwise.
+    """
+    path, idx = spec[0], spec[1]
+    try:
+        f = ImageFont.truetype(path, size, index=idx)
+    except Exception as e:
+        for fb in ("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                   "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+                   "/System/Library/Fonts/Supplemental/Arial Bold.ttf"):
+            if Path(fb).exists():
+                print(f"font: '{path}' is unusable ({e}) — falling back to {fb}", file=sys.stderr)
+                f = ImageFont.truetype(fb, size)
+                break
+        else:
+            raise
+    if weight:
+        try:
+            f.set_variation_by_axes([weight])
+        except Exception:
+            pass  # a static font, or no variable-font support — use it as-is
+    return f
 
 def ease_out_cubic(t):
     return 1 - (1 - t) ** 3
@@ -103,7 +126,7 @@ def build_title(edit, edl):
     frames.mkdir(parents=True)
 
     f_hand = font(fonts["handwritten"], t.get("handwritten_size", 56))
-    f_imp  = font(fonts["impact"], t.get("impact_size", 115))
+    f_imp  = font(fonts["impact"], t.get("impact_size", 115), weight=700)
     L1 = t.get("handwritten", "")
     impact_lines = t.get("impact_lines", [])
     y1 = t.get("y_handwritten", 292)
@@ -380,7 +403,7 @@ def build_hook(edit, edl):
     if frames.exists(): shutil.rmtree(frames)
     frames.mkdir(parents=True)
 
-    f_hook = font(fonts["impact"], 66)
+    f_hook = font(fonts["impact"], 66, weight=700)
     # White hook (distinct from orange keyword captions), with the shadow baked in
     layer = render_caption_image(text, f_hook, HOOK_Y, W - 120, (255, 255, 255, 255))
     crop, (ccx, ccy) = crop_to_content(layer)

@@ -18,13 +18,23 @@ RUN apt-get update && \
 # Caveat  → replaces Noteworthy  (handwritten title line)
 # Oswald  → replaces Impact      (big title caps)
 # Poppins → replaces Arial Bold  (word captions)
+#
+# -f is essential: without it curl happily writes a 404 page into the .ttf and
+# exits 0, so the image builds "fine" and every render then dies with PIL's
+# "unknown file format". Caveat and Oswald are variable fonts upstream now — the
+# old static files (Caveat-Regular / static/Oswald-Bold) were deleted from the
+# repo, which is exactly how this broke. The size check catches any other junk.
 RUN mkdir -p /app/fonts && \
-    curl -sL "https://github.com/google/fonts/raw/main/ofl/caveat/Caveat-Regular.ttf" \
-         -o /app/fonts/Caveat-Regular.ttf && \
-    curl -sL "https://github.com/google/fonts/raw/main/ofl/oswald/static/Oswald-Bold.ttf" \
-         -o /app/fonts/Oswald-Bold.ttf && \
-    curl -sL "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-SemiBold.ttf" \
-         -o /app/fonts/Poppins-SemiBold.ttf
+    curl -fsSL "https://github.com/google/fonts/raw/main/ofl/caveat/Caveat%5Bwght%5D.ttf" \
+         -o /app/fonts/Caveat.ttf && \
+    curl -fsSL "https://github.com/google/fonts/raw/main/ofl/oswald/Oswald%5Bwght%5D.ttf" \
+         -o /app/fonts/Oswald.ttf && \
+    curl -fsSL "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-SemiBold.ttf" \
+         -o /app/fonts/Poppins-SemiBold.ttf && \
+    for f in /app/fonts/*.ttf; do \
+      sz=$(wc -c < "$f"); \
+      [ "$sz" -gt 20000 ] || { echo "BAD FONT (probably an error page): $f ($sz bytes)"; exit 1; }; \
+    done
 
 WORKDIR /app
 

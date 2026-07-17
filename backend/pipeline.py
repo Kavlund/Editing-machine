@@ -40,17 +40,30 @@ VIDEO_EXTS = {".mov", ".mp4", ".avi", ".mkv", ".mxf", ".m4v", ".webm", ".mts", "
 
 # ── Font resolution ────────────────────────────────────────────────────────────
 
+def _looks_like_font(path: str) -> bool:
+    """True only for a real TTF/OTF/TTC. Guards against a download that silently
+    saved an HTML/404 page as a .ttf: the file then EXISTS, gets picked, and the
+    render dies later with PIL's 'unknown file format'."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(4) in (b"\x00\x01\x00\x00", b"true", b"ttcf", b"OTTO")
+    except Exception:
+        return False
+
+
 def _font(kind: str) -> list:
-    """Return [path, ttc_index] for a font, preferring macOS then Docker paths."""
+    """Return [path, ttc_index] for a font, preferring macOS then Docker paths.
+    A candidate must be a VALID font file, not merely present — otherwise a bad
+    download would win over the good system fallbacks below it."""
     candidates = {
         "handwritten": [
             ("/System/Library/Fonts/Noteworthy.ttc", 1),
-            ("/app/fonts/Caveat-Regular.ttf", 0),
+            ("/app/fonts/Caveat.ttf", 0),
             ("/usr/share/fonts/truetype/freefont/FreeSans.ttf", 0),
         ],
         "impact": [
             ("/System/Library/Fonts/Supplemental/Impact.ttf", 0),
-            ("/app/fonts/Oswald-Bold.ttf", 0),
+            ("/app/fonts/Oswald.ttf", 0),
             ("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 0),
         ],
         "caption": [
@@ -61,7 +74,7 @@ def _font(kind: str) -> list:
         ],
     }
     for path, idx in candidates.get(kind, []):
-        if Path(path).exists():
+        if Path(path).exists() and _looks_like_font(path):
             return [path, idx]
     # Return first even if not found — will fail at render with a clear message
     first = candidates.get(kind, [("/tmp/missing.ttf", 0)])[0]
