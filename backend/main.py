@@ -484,6 +484,70 @@ def list_jobs():
     return jobs
 
 
+@app.post("/api/jobs/clear")
+async def clear_jobs(request: Request):
+    """Bulk-delete jobs by status (e.g. every failed one) and their files. A job
+    that is still running is never touched. Corrupt/half-written job files get
+    cleared too, since those are exactly the junk this is for."""
+    body = await request.json()
+    statuses = set(body.get("statuses") or ["failed", "cancelled"])
+    uploads_root = str(UPLOADS_DIR.resolve())
+    deleted = freed = 0
+    for f in list(JOBS_DIR.glob("*.json")):
+        try:
+            j = json.loads(f.read_text())
+        except Exception:
+            try:
+                f.unlink(); deleted += 1      # unreadable job file — clear it
+            except Exception:
+                pass
+            continue
+        if j.get("status") in _RUNNING_STATUSES or j.get("status") not in statuses:
+            continue
+        jid = j.get("id") or f.stem
+        d = (UPLOADS_DIR / jid).resolve()
+        try:
+            if d.is_dir() and str(d).startswith(uploads_root + os.sep):
+                freed += _dir_size(d)
+                shutil.rmtree(d, ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            f.unlink(); deleted += 1
+        except Exception:
+            pass
+    return {"ok": True, "deleted": deleted, "freed_mb": round(freed / 1e6)}
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str):
+    """Delete one job and its files. Refuses while it is still running."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Job not found")
+    try:
+        j = json.loads(path.read_text())
+        if j.get("status") in _RUNNING_STATUSES:
+            raise HTTPException(409, "That job is still running — stop it first")
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # corrupt job file — deleting it is exactly what we want
+    freed = 0
+    d = (UPLOADS_DIR / job_id).resolve()
+    try:
+        if d.is_dir() and str(d).startswith(str(UPLOADS_DIR.resolve()) + os.sep):
+            freed = _dir_size(d)
+            shutil.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+    try:
+        path.unlink()
+    except Exception:
+        pass
+    return {"ok": True, "freed_mb": round(freed / 1e6)}
+
+
 _BRIEF_PROMPT = """You are analyzing a client onboarding / personal brandbook document. Extract the information and return ONLY a valid JSON object — no explanation, no markdown, just the raw JSON.
 
 The document may follow a template with numbered parts (content foundation, conviction, story, life stories, branding, core philosophy, tone of voice, brand colors, brand inspiration). Read the whole document and pull real answers the client wrote — ignore unfilled placeholders like "Write here…".

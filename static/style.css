@@ -970,6 +970,28 @@ input[type="color"] {
   flex-shrink: 0;
 }
 
+/* Status pill + the quick delete X */
+.job-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.job-del {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 1px 5px;
+  border-radius: 6px;
+  transition: color .15s, background .15s;
+}
+.job-del:hover {
+  color: var(--red);
+  background: rgba(255, 255, 255, .07);
+}
+
 .badge {
   display: inline-flex;
   align-items: center;

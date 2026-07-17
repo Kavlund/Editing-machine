@@ -991,7 +991,10 @@ function renderJobs(jobs) {
             ${j.notes ? `<div class="job-meta job-notes">${escapeHtml(j.notes)}</div>` : ''}
           </div>
           <div class="job-right">
-            <span class="badge badge-${j.status}">${STATUS_LABELS[j.status] || j.status}</span>
+            <div class="job-badge-row">
+              <span class="badge badge-${j.status}">${STATUS_LABELS[j.status] || j.status}</span>
+              <button class="job-del" title="Delete this job" onclick="deleteJob('${j.id}')">&times;</button>
+            </div>
             ${actions ? `<div class="job-actions">${actions}</div>` : ''}
             <span class="job-time">${timeAgo(j.created_at)}</span>
           </div>
@@ -1033,6 +1036,27 @@ function renderJobs(jobs) {
 }
 
 window.toggleJobLog = toggleJobLog;
+
+// ── Deleting jobs ─────────────────────────────────────────────────────────
+window.deleteJob = async function (jobId) {
+  if (!confirm('Delete this job and its files? Finished videos already in Drive are not affected.')) return;
+  try {
+    await api.del(`/api/jobs/${jobId}`);
+    toast('Job deleted', 'success');
+    loadJobs();
+  } catch (e) { toast('Could not delete: ' + e.message, 'error'); }
+};
+
+async function clearFailedJobs() {
+  if (!confirm('Delete every failed and cancelled job, and their files? Finished videos in Drive are not affected.')) return;
+  try {
+    const r = await api.post('/api/jobs/clear', { statuses: ['failed', 'cancelled'] });
+    toast(`Deleted ${r.deleted} job(s)` + (r.freed_mb ? `, freed ${r.freed_mb} MB` : ''), 'success');
+    loadJobs();
+  } catch (e) { toast('Could not clear: ' + e.message, 'error'); }
+}
+const _clearFailedBtn = $('clear-failed-btn');
+if (_clearFailedBtn) _clearFailedBtn.addEventListener('click', clearFailedJobs);
 
 // ── Pipeline controls ─────────────────────────────────────────────────────
 
