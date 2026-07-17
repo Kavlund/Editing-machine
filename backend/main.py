@@ -362,48 +362,24 @@ async def upload_footage(
     if not client:
         raise HTTPException(404, "Client not found")
 
-    from integrations import config as _icfg, gdrive as _gdrive
-    drive_on = _icfg.gdrive_configured()
-
+    # Save the uploaded footage to the volume. Simple and reliable — no dependency
+    # on Drive being connected. (The Drive-native path is the separate "Pull from
+    # Drive" picker, which only appears once Drive is connected.)
     job_id  = str(uuid.uuid4())
-    # Receive uploads onto ephemeral scratch, not the volume. With Drive on, each
-    # file is pushed to the client's Drive Source folder and the local copy is
-    # dropped, so nothing heavy stays on the volume. Without Drive, it falls back
-    # to the volume as before.
-    scratch = Path(os.environ.get("RENDER_SCRATCH_ROOT", "/tmp/ee_render")) / "uploads" / job_id
-    scratch.mkdir(parents=True, exist_ok=True)
-    job_dir = UPLOADS_DIR / job_id  # only used if a file is kept locally
+    job_dir = UPLOADS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
 
-    saved, source_drive, total_bytes = [], [], 0
+    saved, total_bytes = [], 0
     for f in files:
         safe_path = Path(f.filename).as_posix().lstrip("/")
-        tmp = scratch / safe_path
-        tmp.parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(tmp, "wb") as out:
+        dest = job_dir / safe_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        async with aiofiles.open(dest, "wb") as out:
             while chunk := await f.read(1024 * 1024):
                 await out.write(chunk)
-        size = tmp.stat().st_size
+        size = dest.stat().st_size
         total_bytes += size
-
-        pushed = None
-        if drive_on:
-            pushed = await asyncio.to_thread(
-                _gdrive.upload_source, client["name"], tmp, Path(safe_path).name,
-                lambda m: print(f"[upload] {m}", flush=True))
-        if pushed and pushed.get("id"):
-            source_drive.append({"id": pushed["id"],
-                                 "name": pushed.get("name") or Path(safe_path).name,
-                                 "size": int(pushed.get("size") or size)})
-        else:
-            # Drive off or the push failed — keep the footage on the volume so it
-            # is never lost.
-            job_dir.mkdir(parents=True, exist_ok=True)
-            local = job_dir / safe_path
-            local.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(tmp), str(local))
-            saved.append({"path": safe_path, "size": size})
-
-    shutil.rmtree(scratch, ignore_errors=True)
+        saved.append({"path": safe_path, "size": size})
 
     job = {
         "id":              job_id,
@@ -413,8 +389,7 @@ async def upload_footage(
         "notes":           notes,
         "status":          "uploaded",
         "created_at":      datetime.now().isoformat(),
-        "files":           saved or [{"path": s["name"], "size": s["size"]} for s in source_drive],
-        "source_drive":    source_drive,
+        "files":           saved,
         "total_bytes":     total_bytes,
         "upload_dir":      str(job_dir),
         "client_snapshot": client,
