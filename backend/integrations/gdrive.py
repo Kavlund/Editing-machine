@@ -174,6 +174,24 @@ def provision_client_folder(client_name: str, log=lambda m: None) -> str | None:
         return None
 
 
+def check_connection(log=lambda m: None) -> dict:
+    """Actually call Drive to verify the stored sign-in still works — a token file
+    existing proves nothing. Returns {"ok": bool, "email": str, "error": str}.
+    Never raises."""
+    if not config.gdrive_configured():
+        return {"ok": False, "email": "", "error": "Drive is not set up yet"}
+    try:
+        svc = _service(log)
+        if svc is None:
+            return {"ok": False, "email": "",
+                    "error": "the saved Google sign-in is no longer valid"}
+        about = svc.about().get(fields="user(emailAddress,displayName)").execute()
+        user = (about or {}).get("user") or {}
+        return {"ok": True, "email": user.get("emailAddress", ""), "error": ""}
+    except Exception as e:
+        return {"ok": False, "email": "", "error": str(e)[:200]}
+
+
 def _resolve_broll_folder(svc, client_name: str, log):
     """The client's B-roll folder in Drive: <root>/<Client>/<B-roll>/. None if Drive
     has no resolvable root."""

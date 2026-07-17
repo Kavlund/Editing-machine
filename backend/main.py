@@ -934,13 +934,29 @@ def _build_gdrive_flow(redirect_uri: str):
 
 @app.get("/api/gdrive/oauth/info")
 def gdrive_oauth_info(request: Request):
-    """Powers the Setup page's Connect button and shows the redirect URI to register."""
+    """Powers the Connect button, shows the redirect URI to register, and — the
+    important bit — actually asks Google whether the stored sign-in still works,
+    so a stale token can't keep showing as "connected"."""
     from integrations import config as _icfg
-    return {
-        "available": _icfg.gdrive_oauth_available(),
-        "connected": _icfg.gdrive_oauth_ready(),
+    info = {
+        "available":    _icfg.gdrive_oauth_available(),
+        "connected":    _icfg.gdrive_oauth_ready(),
         "redirect_uri": _oauth_redirect_uri(request),
+        "working":      None,   # None = not checked (no sign-in stored)
+        "email":        "",
+        "error":        "",
     }
+    if info["connected"]:
+        try:
+            from integrations import gdrive as _gdrive
+            chk = _gdrive.check_connection(log=lambda m: print(f"[gdrive-check] {m}", flush=True))
+            info["working"] = bool(chk.get("ok"))
+            info["email"]   = chk.get("email", "")
+            info["error"]   = chk.get("error", "")
+        except Exception as e:
+            info["working"] = False
+            info["error"]   = str(e)[:200]
+    return info
 
 
 @app.get("/api/gdrive/oauth/start")

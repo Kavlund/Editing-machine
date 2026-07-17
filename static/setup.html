@@ -283,6 +283,17 @@
         if(!available && !note.textContent){
           note.textContent = "Add the two sign-in keys below first, then this button turns on.";
         }
+        // The real state — we actually asked Google, rather than just trusting
+        // that a sign-in file exists.
+        if(info.connected && info.working === true){
+          note.style.color = "var(--green)";
+          note.textContent = "✅ Working — signed in as " + (info.email || "your Google account") + ".";
+        } else if(info.connected && info.working === false){
+          note.style.color = "var(--amber)";
+          note.textContent = "⚠️ A sign-in is saved, but Google is rejecting it"
+            + (info.error ? " (" + info.error + ")" : "")
+            + ". Click Reconnect Google Drive.";
+        }
       }).catch(function(){});
 
     connectBtn.addEventListener("click", function(e){
