@@ -350,6 +350,7 @@ function setProgress(pct) {
 (function () {
   const btn = $('drive-pull-btn'), panel = $('drive-picker');
   const list = $('drive-picker-list'), nameInput = $('drive-job-name'), createBtn = $('drive-create-btn');
+  const scriptInput = $('drive-script');
   if (!btn) return;
   const note = (t) => `<p class="empty-state" style="font-size:.8rem">${t}</p>`;
   const selected = () => [...list.querySelectorAll('input:checked')].map(c =>
@@ -397,11 +398,15 @@ function setProgress(pct) {
         throw new Error(e.detail || `server returned ${res.status}`);
       }
       const job = await res.json();
-      // One press: pull from Drive AND start editing straight away.
+      // One press: pull from Drive AND start editing straight away — with the
+      // script attached, so the same script-grounded clean cut applies here
+      // exactly like it does for a normal computer upload.
       createBtn.textContent = 'Starting…';
-      await api.post(`/api/jobs/${job.id}/run`, { instructions: '', broll_count: 'ai' });
+      const script = scriptInput ? scriptInput.value.trim() : '';
+      await api.post(`/api/jobs/${job.id}/run`, { instructions: '', broll_count: 'ai', script });
       toast(`Editing started for ${job.client_name}`, 'success');
       panel.hidden = true; nameInput.value = ''; els.jobNotes.value = '';
+      if (scriptInput) scriptInput.value = '';
       loadJobs();
     } catch (e) { toast('Could not start: ' + (e.message || e), 'error'); }
     createBtn.disabled = false; createBtn.textContent = 'Create job and start editing';

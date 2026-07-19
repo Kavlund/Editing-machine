@@ -113,6 +113,8 @@
         <div id="drive-picker" hidden style="margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:12px;">
           <div id="drive-picker-list" style="display:flex;flex-direction:column;gap:7px;max-height:220px;overflow-y:auto;"></div>
           <input type="text" id="drive-job-name" placeholder="Job name" style="width:100%;margin-top:10px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit;font-size:.85rem;box-sizing:border-box;">
+          <label class="field-label" for="drive-script" style="display:block;margin-top:10px;">Script <span class="optional">(optional)</span></label>
+          <textarea id="drive-script" rows="3" placeholder="Paste the script for this video — we hold it against the transcript to remove hesitations, filler and retakes cleanly, in any language." style="width:100%;margin-top:4px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit;font-size:.85rem;box-sizing:border-box;resize:vertical;"></textarea>
           <button class="btn btn-primary btn-full btn-sm" id="drive-create-btn" style="margin-top:8px;" disabled>Create job and start editing</button>
         </div>
 
