@@ -87,6 +87,34 @@ def apply_zoom(src, out, strength):
     print(f"  zoom applied: 1.0 -> {end_z:.3f} over {total} frames")
 
 
+def apply_timed_zooms(src, out, events):
+    """Punch in and hold at specific moments: at each event time the frame snaps
+    tighter (fast ease-in), holds for its duration, then eases back to normal.
+    Applied to the base video BEFORE overlays so captions/hook stay locked.
+    events: [{"at": output_sec, "duration": sec, "strength": 0.04..0.30}]."""
+    R = 0.18  # ease in / ease out, seconds
+    terms = []
+    for ev in events:
+        a = max(0.0, float(ev.get("at", 0.0)))
+        d = max(0.5, min(8.0, float(ev.get("duration", 2.5))))
+        strg = max(0.04, min(0.30, float(ev.get("strength", 0.12))))
+        tt = f"(on/{FPS})"
+        # trapezoid pulse: rise over R, hold, fall over R — all inside [a, a+d]
+        rise = f"clip(({tt}-{a:.3f})/{R},0,1)"
+        fall = f"clip(({a + d:.3f}-{tt})/{R},0,1)"
+        terms.append(f"{strg:.4f}*{rise}*{fall}")
+    if not terms:
+        return apply_zoom(src, out, 0.0001)  # no-op safety (shouldn't happen)
+    zexpr = "1+" + "+".join(terms)
+    vf = (f"zoompan=z='{zexpr}':d=1:"
+          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={FPS}")
+    run(["ffmpeg","-y","-v","error","-i",str(src),
+         "-vf",vf,"-c:v","libx264","-preset","fast","-crf","18",
+         "-pix_fmt","yuv420p","-c:a","copy", str(out)])
+    print(f"  timed zooms: {len(events)} punch-in(s) at "
+          + ", ".join(f"{float(e.get('at',0)):.1f}s" for e in events))
+
+
 def actual_offsets(edit, paths):
     """Cumulative output start of each segment from ACTUAL rendered frame counts
     (EDL float offsets drift ~1 frame/segment). Captions + b-roll align to this."""
@@ -222,9 +250,16 @@ def main():
     print("concat -> base30.mkv")
     concat(edit, paths, edit/"base30.mkv")
 
-    # Slow push-in on the base video BEFORE overlays, so captions/hook stay put
+    # Zoom on the base video BEFORE overlays, so captions/hook stay put.
+    # Timestamped punch-in-and-hold zooms take precedence over the slow global push-in.
     base = edit/"base30.mkv"
-    if edl.get("zoom_enabled"):
+    zooms = edl.get("zooms") or []
+    if zooms:
+        print(f"applying {len(zooms)} timed punch-in zoom(s)...")
+        zoomed = edit/"base30_zoom.mkv"
+        apply_timed_zooms(base, zoomed, zooms)
+        base = zoomed
+    elif edl.get("zoom_enabled"):
         print("applying zoom push-in...")
         zoomed = edit/"base30_zoom.mkv"
         apply_zoom(base, zoomed, float(edl.get("zoom_strength", 0.08)))

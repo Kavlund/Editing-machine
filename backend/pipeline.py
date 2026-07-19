@@ -246,10 +246,12 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
       {
         "hook": {"text": str, "start_sec": float, "duration_sec": float} | None,
         "keywords": [str, ...],          # words to emphasize in captions
-        "zoom": {"enabled": bool, "strength": float}
+        "zoom": {"enabled": bool, "strength": float},
+        "zoom_events": [{"at": float, "duration": float, "strength": float}, ...]
       }
     """
-    plan = {"hook": None, "keywords": [], "zoom": {"enabled": False, "strength": 0.08}}
+    plan = {"hook": None, "keywords": [], "zoom": {"enabled": False, "strength": 0.08},
+            "zoom_events": []}
     transcript = _full_transcript(source_map)
     if not transcript:
         return plan
@@ -292,7 +294,8 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         '    "duration_sec": 6   // how long the hook stays on screen (5-8 typical); it pops in then out\n'
         "  },\n"
         '  "keywords": ["the","most","important","content","words","to","emphasize"],\n'
-        '  "zoom": {"enabled": true/false, "strength": 0.06-0.12}\n'
+        '  "zoom": {"enabled": true/false, "strength": 0.06-0.12},\n'
+        '  "zoom_events": [{"at": 8.0, "duration": 2.5, "strength": 0.12}]  // timestamped punch-ins\n'
         "}\n\n"
         "Rules:\n"
         "- LANGUAGE: write the hook and pick the keywords in the SAME language the speaker uses "
@@ -301,8 +304,14 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         "- keywords: pick the 15-30 highest-impact CONTENT words across the whole script "
         "(nouns, verbs, numbers, names). These get highlighted as they appear in captions. "
         "Skip filler and function words. Lowercase them.\n"
-        "- zoom.enabled only if instructions mention zoom / punch-in / movement.\n"
-        "- Respect the instructions literally. If they say no hook, hook=null. If they don't mention zoom, zoom.enabled=false."
+        "- zoom.enabled is the SLOW global push-in across the whole video — only if the instructions ask "
+        "for general movement/energy with no specific time.\n"
+        "- zoom_events are SPECIFIC punch-in-and-hold moments. Whenever the instructions name a time "
+        "(\"zoom at 8 seconds\", \"punch in at 0:12\", \"zoom when I say the price\"), add an event with "
+        "\"at\" = that time in SECONDS from the start of the FINAL video (convert mm:ss to seconds), "
+        "\"duration\" 1.5-3.5 (how long it holds, default 2.5), \"strength\" 0.08-0.15 (default 0.12). "
+        "List every distinct time mentioned. If no specific time is mentioned, leave zoom_events empty [].\n"
+        "- Respect the instructions literally. If they say no hook, hook=null. If they don't mention zoom, zoom.enabled=false and zoom_events=[]."
         + brand_voice
     )
     try:
@@ -330,8 +339,20 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                 "enabled": bool(z.get("enabled")),
                 "strength": max(0.04, min(0.15, float(z.get("strength", 0.08) or 0.08))),
             }
+            evs = []
+            for e in (parsed.get("zoom_events") or []):
+                try:
+                    evs.append({
+                        "at":       max(0.0, float(e.get("at", 0) or 0)),
+                        "duration": max(0.8, min(6.0, float(e.get("duration", 2.5) or 2.5))),
+                        "strength": max(0.06, min(0.30, float(e.get("strength", 0.12) or 0.12))),
+                    })
+                except (TypeError, ValueError):
+                    continue
+            plan["zoom_events"] = evs
         log_fn(f"AI plan: hook={'yes' if plan['hook'] else 'no'}, "
-               f"{len(plan['keywords'])} keyword(s), zoom={plan['zoom']['enabled']}")
+               f"{len(plan['keywords'])} keyword(s), zoom={plan['zoom']['enabled']}, "
+               f"{len(plan['zoom_events'])} timed zoom(s)")
     except Exception as e:
         log_fn(f"AI plan generation failed ({e}) — using safe defaults")
     return plan
@@ -984,6 +1005,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         keywords       = []
         zoom_enabled   = False
         zoom_strength  = 0.08
+        zoom_events    = []
         filler_indices = None
         anthropic_key  = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -1029,6 +1051,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 keywords      = plan["keywords"]
                 zoom_enabled  = plan["zoom"]["enabled"]
                 zoom_strength = plan["zoom"]["strength"]
+                zoom_events   = plan.get("zoom_events", [])
                 if hook_plan:
                     _log(job_path, f"AI: hook = '{hook_plan['text']}' "
                                    f"(shows {hook_plan['start_sec']:.0f}s–{hook_plan['start_sec']+hook_plan['duration_sec']:.0f}s)")
@@ -1039,6 +1062,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 _log(job_path, "AI: hook disabled by the client's specific instructions")
             if directives.get("zoom") == "off":
                 zoom_enabled = False
+                zoom_events = []
             elif directives.get("zoom") == "force":
                 zoom_enabled = True
 
@@ -1073,6 +1097,44 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 "No on-camera speech found in transcripts. "
                 "Check the speaker setting on the client profile."
             )
+
+        # ── 4a. Timestamped punch-in zooms (in FINAL-video seconds) ────────────
+        # Merge AI-parsed "zoom at Ns" events with the chat's manual add/remove.
+        total_out = sum(r["end"] - r["start"] for r in edl["ranges"]) or 0.0
+        z_add    = job.get("zoom_add", [])     # [{at,duration,strength}] added via chat
+        z_remove = job.get("zoom_remove", [])  # [{at}] removed via chat (matched within 0.4s)
+        def _z_removed(at: float) -> bool:
+            return any(abs(at - float(r.get("at", -999))) < 0.4 for r in z_remove)
+        merged = []
+        for ev in (list(zoom_events) + list(z_add)):
+            try:
+                at = float(ev.get("at", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if at < 0 or at > total_out + 0.5:
+                _log(job_path, f"Zoom: {at:.1f}s is outside the {total_out:.1f}s video — skipping")
+                continue
+            if _z_removed(at):
+                continue
+            dur  = max(0.8, min(6.0, float(ev.get("duration", 2.5) or 2.5)))
+            dur  = min(dur, max(0.8, total_out - at))   # never hold past the end
+            strg = max(0.06, min(0.30, float(ev.get("strength", 0.12) or 0.12)))
+            merged.append({"at": round(at, 2), "duration": round(dur, 2), "strength": round(strg, 3)})
+        merged.sort(key=lambda e: e["at"])
+        zooms = []
+        for e in merged:   # drop near-duplicates within 0.4s
+            if zooms and abs(e["at"] - zooms[-1]["at"]) < 0.4:
+                continue
+            zooms.append(e)
+        if zooms:
+            edl["zooms"] = zooms
+            _log(job_path, "Zoom: " + ", ".join(
+                f"{e['at']:.1f}s +{e['strength']*100:.0f}% for {e['duration']:.1f}s" for e in zooms))
+        # Record the final zooms so the chat/timeline can list and edit them precisely
+        _jz = json.loads(job_path.read_text())
+        _jz["zoom_last"] = zooms
+        job_path.write_text(json.dumps(_jz, indent=2))
+        (project_dir / "edl.json").write_text(json.dumps(edl, indent=2))
 
         # ── 4b. Inject B-roll — AI-matched to what's being said ────────────────
         client_id   = job.get("client_id", "")

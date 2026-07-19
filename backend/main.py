@@ -1394,6 +1394,11 @@ The AI picks per photo by default; pass style on add_broll to force one. If the 
 pop up as a card (e.g. "make all the pictures pop in", "always use the BAM effect"), call set_photo_style
 with mode "cards"; use "auto" to hand the choice back to the AI.
 
+For ZOOM changes: a punch-in zoom snaps the frame tighter at a moment, holds, then eases back. When the user
+says "zoom at 8 seconds", "punch in at 0:12", or "add a zoom when…", call add_zoom with at_sec in seconds
+(convert mm:ss to seconds). Call list_zooms first if they want to move or remove one; use remove_zoom at the
+timestamp, or clear_zooms to drop them all. Zoom edits persist across re-renders just like B-roll.
+
 After applying any change, tell the user in one sentence what changed. The re-render starts automatically.
 
 GRADE FILTER — HOW IT WORKS:
@@ -1480,6 +1485,40 @@ _JOB_CHAT_TOOLS = [
     {
         "name": "reset_broll",
         "description": "Discard all manual B-roll add/remove edits and let the AI re-match B-roll from scratch on the next render.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "list_zooms",
+        "description": "List the punch-in zooms currently in this video (each with its timestamp in seconds), so you can add or remove them precisely.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "add_zoom",
+        "description": "Add a punch-in-and-hold zoom at a specific moment, then re-render. The frame snaps tighter at 'at_sec', holds, then eases back. Use for 'zoom at 8 seconds' style requests.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "at_sec":       {"type": "number", "description": "When to punch in, in seconds from the start of the FINAL video"},
+                "duration_sec": {"type": "number", "description": "How long to hold the zoom, 1.5–3.5s (default 2.5)"},
+                "strength":     {"type": "number", "description": "How tight, 0.08 (subtle) to 0.20 (strong); default 0.12"},
+            },
+            "required": ["at_sec"],
+        },
+    },
+    {
+        "name": "remove_zoom",
+        "description": "Remove the punch-in zoom at (or nearest to) a given timestamp, then re-render.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "at_sec": {"type": "number", "description": "The timestamp (seconds) of the zoom to remove"},
+            },
+            "required": ["at_sec"],
+        },
+    },
+    {
+        "name": "clear_zooms",
+        "description": "Remove ALL punch-in zooms currently in this video, then re-render with no zooms.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
 ]
@@ -1649,6 +1688,62 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             _rerender_job(job, job_id)
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"photo_style": mode}})
             return {"ok": True, "photo_style": mode, "rerendering": True}
+
+    if tool_name in ("list_zooms", "add_zoom", "remove_zoom", "clear_zooms"):
+        if not job_id:
+            return {"error": "No job context"}
+        job_path = JOBS_DIR / f"{job_id}.json"
+        if not job_path.exists():
+            return {"error": "Job not found"}
+        job = json.loads(job_path.read_text())
+
+        if tool_name == "list_zooms":
+            return {
+                "zooms_in_video":        job.get("zoom_last", []),
+                "your_manual_additions": job.get("zoom_add", []),
+                "your_removals":         job.get("zoom_remove", []),
+            }
+
+        if tool_name == "add_zoom":
+            try:
+                at = round(float(tool_input.get("at_sec")), 2)
+            except (TypeError, ValueError):
+                return {"error": "Need a numeric 'at_sec' (seconds into the final video)"}
+            if at < 0:
+                return {"error": "at_sec must be 0 or more"}
+            entry = {
+                "at":       at,
+                "duration": max(0.8, min(6.0, float(tool_input.get("duration_sec", 2.5) or 2.5))),
+                "strength": max(0.06, min(0.30, float(tool_input.get("strength", 0.12) or 0.12))),
+            }
+            adds = job.setdefault("zoom_add", [])
+            adds[:] = [a for a in adds if abs(float(a.get("at", -999)) - at) >= 0.4]  # replace one at same time
+            adds.append(entry)
+            job["zoom_remove"] = [r for r in job.get("zoom_remove", [])
+                                  if abs(float(r.get("at", -999)) - at) >= 0.4]
+            _rerender_job(job, job_id)
+            applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"zoom_added": entry}})
+            return {"ok": True, "added": entry, "rerendering": True}
+
+        if tool_name == "remove_zoom":
+            try:
+                at = round(float(tool_input.get("at_sec")), 2)
+            except (TypeError, ValueError):
+                return {"error": "Need a numeric 'at_sec' to remove"}
+            job["zoom_add"] = [a for a in job.get("zoom_add", [])
+                               if abs(float(a.get("at", -999)) - at) >= 0.4]
+            job.setdefault("zoom_remove", []).append({"at": at})
+            _rerender_job(job, job_id)
+            applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"zoom_removed_at": at}})
+            return {"ok": True, "removed_at": at, "rerendering": True}
+
+        if tool_name == "clear_zooms":
+            job.pop("zoom_add", None)
+            # Suppress every zoom currently placed so none survive the re-render
+            job["zoom_remove"] = [{"at": float(z.get("at", 0))} for z in job.get("zoom_last", [])]
+            _rerender_job(job, job_id)
+            applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"zooms": "cleared"}})
+            return {"ok": True, "rerendering": True}
 
     if tool_name == "list_clients":
         return [{"id": c["id"], "name": c["name"]} for c in load_clients()]
