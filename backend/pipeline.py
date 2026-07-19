@@ -1101,12 +1101,15 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         # ── 4a. Timestamped punch-in zooms (in FINAL-video seconds) ────────────
         # Merge AI-parsed "zoom at Ns" events with the chat's manual add/remove.
         total_out = sum(r["end"] - r["start"] for r in edl["ranges"]) or 0.0
-        z_add    = job.get("zoom_add", [])     # [{at,duration,strength}] added via chat
+        z_add    = job.get("zoom_add", [])     # [{at,duration,strength}] added via chat/timeline
         z_remove = job.get("zoom_remove", [])  # [{at}] removed via chat (matched within 0.4s)
+        # When the timeline UI has set zooms explicitly, it is the source of truth:
+        # ignore the AI-parsed events and use only the manual list.
+        base_events = [] if job.get("zoom_manual") else list(zoom_events)
         def _z_removed(at: float) -> bool:
             return any(abs(at - float(r.get("at", -999))) < 0.4 for r in z_remove)
         merged = []
-        for ev in (list(zoom_events) + list(z_add)):
+        for ev in (base_events + list(z_add)):
             try:
                 at = float(ev.get("at", 0) or 0)
             except (TypeError, ValueError):
@@ -1130,9 +1133,11 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             edl["zooms"] = zooms
             _log(job_path, "Zoom: " + ", ".join(
                 f"{e['at']:.1f}s +{e['strength']*100:.0f}% for {e['duration']:.1f}s" for e in zooms))
-        # Record the final zooms so the chat/timeline can list and edit them precisely
+        # Record the final zooms + the output length so the chat/timeline can list
+        # and edit them precisely (the timeline bar needs the duration).
         _jz = json.loads(job_path.read_text())
         _jz["zoom_last"] = zooms
+        _jz["output_duration"] = round(total_out, 2)
         job_path.write_text(json.dumps(_jz, indent=2))
         (project_dir / "edl.json").write_text(json.dumps(edl, indent=2))
 

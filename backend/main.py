@@ -997,6 +997,61 @@ def download_output(job_id: str):
     raise HTTPException(404, "Finished video not found. It may still be delivering to Drive.")
 
 
+# ── Zoom timeline (drag-and-drop punch-in markers) ─────────────────────────
+
+@app.get("/api/jobs/{job_id}/zooms")
+def get_job_zooms(job_id: str):
+    """Everything the timeline UI needs: the video length, the current zoom
+    markers, and whether a local preview file exists."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Job not found")
+    job = json.loads(path.read_text())
+    output_path = job.get("output_path") or ""
+    has_local = bool(output_path and Path(output_path).exists())
+    return {
+        "duration":  float(job.get("output_duration") or 0.0),
+        "zooms":     job.get("zoom_add") if job.get("zoom_manual") else job.get("zoom_last", []),
+        "has_local_video": has_local,
+        "video_url": f"/api/jobs/{job_id}/download",
+        "status":    job.get("status", ""),
+    }
+
+
+@app.post("/api/jobs/{job_id}/zooms")
+async def set_job_zooms(job_id: str, request: Request):
+    """The timeline is the source of truth: replace this job's zooms with the
+    marker list and re-render. Each marker is {at, duration?, strength?}."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Job not found")
+    job = json.loads(path.read_text())
+    body = await request.json()
+    markers = body.get("zooms", [])
+    if not isinstance(markers, list):
+        raise HTTPException(400, "zooms must be a list")
+    dur_total = float(job.get("output_duration") or 0.0)
+    clean = []
+    for m in markers:
+        try:
+            at = round(float(m.get("at")), 2)
+        except (TypeError, ValueError):
+            continue
+        if at < 0 or (dur_total and at > dur_total + 0.5):
+            continue
+        clean.append({
+            "at":       at,
+            "duration": max(0.8, min(6.0, float(m.get("duration", 2.5) or 2.5))),
+            "strength": max(0.06, min(0.30, float(m.get("strength", 0.12) or 0.12))),
+        })
+    clean.sort(key=lambda e: e["at"])
+    job["zoom_add"]    = clean
+    job["zoom_remove"] = []
+    job["zoom_manual"] = True   # timeline overrides the AI's auto-zoom guesses
+    _rerender_job(job, job_id)
+    return {"ok": True, "zooms": clean, "rerendering": True}
+
+
 # ── Health ────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")

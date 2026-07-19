@@ -412,6 +412,71 @@
     </div>
   </div>
 
+  <!-- Zoom timeline: drag-and-drop punch-in markers on a preview of the finished video -->
+  <div class="zt-overlay" id="zt-overlay" hidden>
+    <div class="zt-modal">
+      <div class="zt-header">
+        <div>
+          <div class="zt-title">Zoom timeline</div>
+          <div class="zt-subtitle" id="zt-subtitle">Drag markers to set where the video punches in</div>
+        </div>
+        <button class="btn-icon" id="zt-close-btn" title="Close">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+        </button>
+      </div>
+
+      <div class="zt-body">
+        <div class="zt-video-wrap" id="zt-video-wrap">
+          <video class="zt-video" id="zt-video" playsinline preload="metadata"></video>
+          <div class="zt-video-fallback" id="zt-video-fallback" hidden>
+            Preview isn't available locally (the finished video is stored in Drive), but you can still
+            place zooms on the bar below using the timestamps.
+          </div>
+        </div>
+
+        <div class="zt-bar-row">
+          <span class="zt-time" id="zt-time-cur">0:00</span>
+          <div class="zt-bar" id="zt-bar">
+            <div class="zt-progress" id="zt-progress"></div>
+            <div class="zt-playhead" id="zt-playhead"></div>
+            <!-- markers injected here -->
+          </div>
+          <span class="zt-time" id="zt-time-dur">0:00</span>
+        </div>
+
+        <div class="zt-controls">
+          <button class="btn btn-sm btn-outline" id="zt-add-btn">+ Add zoom at playhead</button>
+          <div class="zt-selected" id="zt-selected" hidden>
+            <span class="zt-sel-label">Selected zoom at <b id="zt-sel-at">0:00</b></span>
+            <label class="zt-field">Strength
+              <select id="zt-sel-strength">
+                <option value="0.08">Subtle</option>
+                <option value="0.12" selected>Medium</option>
+                <option value="0.18">Strong</option>
+              </select>
+            </label>
+            <label class="zt-field">Hold
+              <select id="zt-sel-duration">
+                <option value="1.5">1.5s</option>
+                <option value="2.5" selected>2.5s</option>
+                <option value="3.5">3.5s</option>
+              </select>
+            </label>
+            <button class="btn btn-sm btn-stop" id="zt-del-btn">Delete</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="zt-footer">
+        <span class="zt-hint" id="zt-hint">Click the bar to scrub · "Add zoom" drops a marker at the playhead · drag markers to move them</span>
+        <div class="zt-footer-actions">
+          <button class="btn btn-ghost" id="zt-cancel-btn">Cancel</button>
+          <button class="btn btn-primary" id="zt-apply-btn">Apply zooms &amp; re-render</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>

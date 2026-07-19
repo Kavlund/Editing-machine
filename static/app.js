@@ -990,6 +990,9 @@ function renderJobs(jobs) {
         ? `<a class="btn btn-sm btn-outline" href="/api/jobs/${j.id}/download">Download</a>`
         : '',
       isDone
+        ? `<button class="btn btn-sm btn-outline" onclick="openZoomTimeline('${j.id}','${safeFolder}')">Zoom timeline</button>`
+        : '',
+      isDone
         ? `<button class="btn btn-sm btn-chat" onclick="openJobChat('${j.id}','${safeFolder}')">Edit video</button>`
         : '',
     ].filter(Boolean).join('');
@@ -1701,3 +1704,177 @@ chatEls.messages.addEventListener('click', e => {
   const hint = e.target.closest('.chat-hint');
   if (hint) chatSend(hint.dataset.hint);
 });
+
+// ── Zoom timeline: drag-and-drop punch-in markers ─────────────────────────
+const zt = { jobId: null, duration: 0, t: 0, markers: [], selected: null, drag: null };
+const ztEls = {
+  overlay:  $('zt-overlay'),  video:   $('zt-video'),      fallback: $('zt-video-fallback'),
+  bar:      $('zt-bar'),      progress:$('zt-progress'),   playhead: $('zt-playhead'),
+  cur:      $('zt-time-cur'), dur:     $('zt-time-dur'),   add:      $('zt-add-btn'),
+  sel:      $('zt-selected'), selAt:   $('zt-sel-at'),     selStr:   $('zt-sel-strength'),
+  selDur:   $('zt-sel-duration'), del:  $('zt-del-btn'),   apply:    $('zt-apply-btn'),
+  subtitle: $('zt-subtitle'),
+};
+
+function ztFmt(s) {
+  s = Math.max(0, s || 0);
+  return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+}
+
+async function openZoomTimeline(jobId, jobName) {
+  zt.jobId = jobId; zt.markers = []; zt.selected = null; zt.drag = null; zt.t = 0;
+  ztEls.subtitle.textContent = jobName
+    ? `"${jobName}" — drag markers to set where the video punches in`
+    : 'Drag markers to set where the video punches in';
+  ztEls.overlay.hidden = false;
+  ztSetPlayhead(0);
+  try {
+    const r = await fetch(`/api/jobs/${jobId}/zooms`);
+    const d = await r.json();
+    zt.duration = d.duration || 0;
+    zt.markers = (d.zooms || []).map(z => ({
+      at: +z.at || 0, duration: +z.duration || 2.5, strength: +z.strength || 0.12,
+    }));
+    ztEls.dur.textContent = ztFmt(zt.duration);
+    if (d.has_local_video) {
+      ztEls.video.hidden = false; ztEls.fallback.hidden = true;
+      ztEls.video.src = d.video_url;
+      ztEls.video.onloadedmetadata = () => {
+        if (!zt.duration || Math.abs(ztEls.video.duration - zt.duration) > 0.6) {
+          zt.duration = ztEls.video.duration;
+          ztEls.dur.textContent = ztFmt(zt.duration);
+          ztRender();
+        }
+      };
+    } else {
+      ztEls.video.hidden = true; ztEls.fallback.hidden = false; ztEls.video.removeAttribute('src');
+    }
+    ztRender();
+  } catch { toast('Could not load the timeline', 'error'); }
+}
+window.openZoomTimeline = openZoomTimeline;
+
+function ztClose() {
+  ztEls.overlay.hidden = true;
+  try { ztEls.video.pause(); } catch {}
+  ztEls.video.removeAttribute('src');
+}
+
+function ztSetPlayhead(t) {
+  t = Math.min(zt.duration || 0, Math.max(0, t));
+  zt.t = t;
+  const pct = ((t / (zt.duration || 1)) * 100);
+  ztEls.playhead.style.left = `${pct}%`;
+  ztEls.progress.style.width = `${pct}%`;
+  ztEls.cur.textContent = ztFmt(t);
+}
+
+function ztRender() {
+  [...ztEls.bar.querySelectorAll('.zt-marker')].forEach(n => n.remove());
+  const D = zt.duration || 1;
+  zt.markers.forEach((m, i) => {
+    const el = document.createElement('div');
+    el.className = 'zt-marker' + (zt.selected === i ? ' sel' : '');
+    el.style.left = `${Math.min(100, Math.max(0, (m.at / D) * 100))}%`;
+    el.title = `Zoom at ${ztFmt(m.at)}`;
+    el.innerHTML = '<span class="zt-marker-cap"></span>';
+    el.addEventListener('pointerdown', e => ztStartDrag(e, i));
+    ztEls.bar.appendChild(el);
+  });
+  if (zt.selected != null && zt.markers[zt.selected]) {
+    const m = zt.markers[zt.selected];
+    ztEls.sel.hidden = false;
+    ztEls.selAt.textContent = ztFmt(m.at);
+    ztEls.selStr.value = String(m.strength);
+    ztEls.selDur.value = String(m.duration);
+  } else {
+    ztEls.sel.hidden = true;
+  }
+}
+
+function ztPct(clientX) {
+  const rect = ztEls.bar.getBoundingClientRect();
+  return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+}
+
+function ztStartDrag(e, i) {
+  e.preventDefault(); e.stopPropagation();
+  zt.selected = i; zt.drag = i;
+  ztRender();
+  const markerEl = ztEls.bar.querySelectorAll('.zt-marker')[i];
+  markerEl?.classList.add('dragging');
+  const move = ev => {
+    const t = ztPct(ev.clientX) * zt.duration;
+    zt.markers[i].at = Math.round(t * 100) / 100;
+    if (markerEl) markerEl.style.left = `${(zt.markers[i].at / (zt.duration || 1)) * 100}%`;
+    ztEls.selAt.textContent = ztFmt(zt.markers[i].at);
+  };
+  const up = () => {
+    zt.drag = null;
+    markerEl?.classList.remove('dragging');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+}
+
+ztEls.bar.addEventListener('pointerdown', e => {
+  if (e.target.closest('.zt-marker')) return;   // markers handle their own drag
+  ztSeek(ztPct(e.clientX) * zt.duration);
+  zt.selected = null;
+  ztRender();
+});
+
+function ztSeek(t) {
+  ztSetPlayhead(t);
+  if (ztEls.video.src && !ztEls.video.hidden) { try { ztEls.video.currentTime = zt.t; } catch {} }
+}
+
+ztEls.video.addEventListener('timeupdate', () => {
+  if (!ztEls.video.hidden && zt.drag == null) ztSetPlayhead(ztEls.video.currentTime);
+});
+
+ztEls.add.addEventListener('click', () => {
+  const t = Math.round(zt.t * 100) / 100;
+  if (zt.markers.some(m => Math.abs(m.at - t) < 0.4)) {
+    toast('There is already a zoom near here', 'info');
+    return;
+  }
+  zt.markers.push({ at: t, duration: 2.5, strength: 0.12 });
+  zt.selected = zt.markers.length - 1;
+  ztRender();
+});
+
+ztEls.selStr.addEventListener('change', () => {
+  if (zt.selected != null) zt.markers[zt.selected].strength = +ztEls.selStr.value;
+});
+ztEls.selDur.addEventListener('change', () => {
+  if (zt.selected != null) zt.markers[zt.selected].duration = +ztEls.selDur.value;
+});
+ztEls.del.addEventListener('click', () => {
+  if (zt.selected != null) { zt.markers.splice(zt.selected, 1); zt.selected = null; ztRender(); }
+});
+
+ztEls.apply.addEventListener('click', async () => {
+  ztEls.apply.disabled = true;
+  try {
+    const r = await fetch(`/api/jobs/${zt.jobId}/zooms`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zooms: zt.markers }),
+    });
+    if (!r.ok) throw new Error();
+    const n = zt.markers.length;
+    toast(`${n} zoom${n !== 1 ? 's' : ''} applied — re-rendering`, 'success');
+    ztClose();
+    loadJobs();
+  } catch {
+    toast('Could not apply zooms', 'error');
+  } finally {
+    ztEls.apply.disabled = false;
+  }
+});
+
+$('zt-close-btn').addEventListener('click', ztClose);
+$('zt-cancel-btn').addEventListener('click', ztClose);
+ztEls.overlay.addEventListener('click', e => { if (e.target === ztEls.overlay) ztClose(); });
