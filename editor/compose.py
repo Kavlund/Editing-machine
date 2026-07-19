@@ -135,8 +135,24 @@ def overlay(edit, edl, base, out, starts, durs):
     if has_title: ti = nin; inputs += ["-i", str(title)];     nin += 1
     if has_caps:  ci = nin; inputs += ["-i", str(caps)];      nin += 1
     bidx0 = nin
+    OVL = 1.5/FPS
+    _IMG = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+    # Precompute each B-roll's on-screen window so a still photo can be looped for
+    # exactly its length (a video just plays its own frames).
+    bwin = []
     for b in broll:
-        inputs += ["-i", str(edit/b["file"])]
+        seg_i = min(range(len(edl_off)), key=lambda k: abs(edl_off[k]-b["start_in_output"]))
+        span  = int(b.get("span", 1))
+        s = starts[seg_i] + float(b.get("delay", 0.0))
+        clip_dur = float(b.get("duration", 0))
+        e = s + clip_dur + OVL if clip_dur > 0 else starts[seg_i] + sum(durs[seg_i:seg_i+span]) + OVL
+        is_img = Path(str(b["file"])).suffix.lower() in _IMG
+        bwin.append((b, s, e, is_img))
+        p = str(edit/b["file"])
+        if is_img:
+            inputs += ["-loop", "1", "-t", f"{max(0.3, e - s + 0.2):.3f}", "-i", p]
+        else:
+            inputs += ["-i", p]
 
     parts = ["[0:v]format=yuv420p[v0]"]
     # Hook is placed at its start_sec by shifting PTS; shown only for its own length
@@ -144,18 +160,32 @@ def overlay(edit, edl, base, out, starts, durs):
     if has_title: parts.append(f"[{ti}:v]setpts=PTS-STARTPTS[t1]")
     if has_caps:  parts.append(f"[{ci}:v]setpts=PTS-STARTPTS[c1]")
 
-    OVL = 1.5/FPS
     cur = "[v0]"
-    for i, b in enumerate(broll):
+    for i, (b, s, e, is_img) in enumerate(bwin):
         idx = bidx0 + i
-        seg_i = min(range(len(edl_off)), key=lambda k: abs(edl_off[k]-b["start_in_output"]))
-        span = int(b.get("span", 1))
-        s = starts[seg_i] + float(b.get("delay", 0.0))
-        clip_dur = float(b.get("duration", 0))
-        e = s + clip_dur + OVL if clip_dur > 0 else starts[seg_i] + sum(durs[seg_i:seg_i+span]) + OVL
-        parts.append(f"[{idx}:v]setpts=PTS-STARTPTS+{s}/TB[b{i}]")
+        if is_img and b.get("mode") == "card":
+            # "BAM" card: the photo snaps up on a white card over the speaker,
+            # centered in the upper third, and cuts out at the end of the window.
+            parts.append(
+                f"[{idx}:v]scale=660:900:force_original_aspect_ratio=decrease,"
+                f"pad=iw+28:ih+28:14:14:color=white,"
+                f"format=yuv420p,setpts=PTS-STARTPTS+{s}/TB[b{i}]")
+            ov = f"overlay=x=(W-w)/2:y=(H-h)/2-200:enable='between(t,{s:.3f},{e:.3f})'"
+        elif is_img:
+            # Full-frame still: cover the frame + a gentle Ken Burns push-in, held
+            # for the placement window (the looped input above gives it a timeline).
+            nfr = max(1, int((e - s) * FPS))
+            zexpr = f"min(1+0.06*on/{nfr},1.06)"
+            parts.append(
+                f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+                f"zoompan=z='{zexpr}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={FPS},"
+                f"format=yuv420p,setpts=PTS-STARTPTS+{s}/TB[b{i}]")
+            ov = f"overlay=enable='between(t,{s:.3f},{e:.3f})'"
+        else:
+            parts.append(f"[{idx}:v]setpts=PTS-STARTPTS+{s}/TB[b{i}]")
+            ov = f"overlay=enable='between(t,{s:.3f},{e:.3f})'"
         nl = f"[bo{i}]"
-        parts.append(f"{cur}[b{i}]overlay=enable='between(t,{s:.3f},{e:.3f})'{nl}")
+        parts.append(f"{cur}[b{i}]{ov}{nl}")
         cur = nl
     if has_hook:
         he = hook_start + hook_dur

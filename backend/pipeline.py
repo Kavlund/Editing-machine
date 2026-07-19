@@ -7,7 +7,13 @@ from pathlib import Path
 
 MAX_JOB_MINUTES = 45  # hard wall-clock limit per job
 
-BROLL_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+BROLL_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+BROLL_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+BROLL_EXTS = BROLL_VIDEO_EXTS | BROLL_IMAGE_EXTS
+
+def _is_broll_image(p) -> bool:
+    from pathlib import Path as _P
+    return _P(p).suffix.lower() in BROLL_IMAGE_EXTS
 
 MOCK_TRANSCRIBE     = os.environ.get("MOCK_TRANSCRIBE", "") == "1"
 SLACK_WEBHOOK_URL   = os.environ.get("SLACK_WEBHOOK_URL", "")
@@ -521,16 +527,22 @@ def tag_broll_clips(broll_src: Path, clips: list, anthropic_key: str, log_fn, ca
             continue
         try:
             frame = tmp / f"{clip.stem}.jpg"
-            # sample a frame ~1s in (or start for very short clips)
-            dur = 0.0
-            try:
-                r = subprocess.run(["ffprobe","-v","error","-show_entries","format=duration",
-                                    "-of","default=noprint_wrappers=1:nokey=1", str(clip)],
-                                   capture_output=True, text=True, timeout=30)
-                dur = float(r.stdout.strip() or 0.0)
-            except Exception:
-                pass
-            _extract_frame(clip, frame, t=min(1.0, dur/2) if dur else None)
+            # _extract_frame with no seek converts ANY still (jpg/png/webp/heic) to a
+            # small jpeg too, so pictures are analysed exactly like a video frame.
+            if _is_broll_image(clip):
+                _extract_frame(clip, frame, t=None)
+                subject = "This is a B-roll photo / still image."
+            else:
+                dur = 0.0
+                try:
+                    r = subprocess.run(["ffprobe","-v","error","-show_entries","format=duration",
+                                        "-of","default=noprint_wrappers=1:nokey=1", str(clip)],
+                                       capture_output=True, text=True, timeout=30)
+                    dur = float(r.stdout.strip() or 0.0)
+                except Exception:
+                    pass
+                _extract_frame(clip, frame, t=min(1.0, dur/2) if dur else None)
+                subject = "This is a frame from a B-roll video clip."
             b64 = base64.standard_b64encode(frame.read_bytes()).decode()
             resp = sdk.messages.create(
                 model="claude-sonnet-5",
@@ -538,7 +550,7 @@ def tag_broll_clips(broll_src: Path, clips: list, anthropic_key: str, log_fn, ca
                 messages=[{"role": "user", "content": [
                     {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
                     {"type": "text", "text":
-                        "This is a frame from a B-roll video clip. Return STRICT JSON only:\n"
+                        subject + " Return STRICT JSON only:\n"
                         '{"description": "one plain sentence of what is shown", '
                         '"keywords": ["6-10 concrete nouns / actions / concepts a script might mention that this clip could illustrate"]}'},
                 ]}],
@@ -603,10 +615,12 @@ def _find_quote_time(timeline: list, quote: str) -> float | None:
 
 
 def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
-                anthropic_key: str, log_fn, desired_count: int | None = None) -> list:
+                anthropic_key: str, log_fn, desired_count: int | None = None,
+                force_cards: bool = False) -> list:
     """Ask Claude where each B-roll clip best illustrates the script.
-    Returns [{"file": name, "quote": "...", "duration_sec": float}].
-    desired_count: exact number of cutaways to return (best-fitting); None = AI decides."""
+    Returns [{"file": name, "quote": "...", "duration_sec": float, "style": "card"|"full"}].
+    desired_count: exact number of cutaways to return (best-fitting); None = AI decides.
+    force_cards: photos always pop up as cards (the AI's per-photo card/full choice is ignored)."""
     transcript = _full_transcript(source_map)
     if not transcript or not broll_tags:
         return []
@@ -614,9 +628,11 @@ def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
     sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=1)
 
     catalog = "\n".join(
-        f'- "{name}": {info.get("description","")} (keywords: {", ".join(info.get("keywords", []))})'
+        f'- "{name}" [{"PHOTO" if _is_broll_image(name) else "VIDEO"}]: '
+        f'{info.get("description","")} (keywords: {", ".join(info.get("keywords", []))})'
         for name, info in broll_tags.items()
     )
+    has_photos = any(_is_broll_image(n) for n in broll_tags)
     if desired_count and desired_count > 0:
         count_rule = (f"- Place AT MOST {desired_count} cutaway(s) — and ONLY ones that clearly fit. "
                       f"If fewer than {desired_count} strongly match, place fewer (or none). "
@@ -624,10 +640,20 @@ def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
     else:
         count_rule = ("- There is no target number. Place only strong matches, spaced out. Most talking-head "
                       "videos need only a few genuine cutaways — often zero.\n")
+    photo_rule = ""
+    if has_photos:
+        photo_rule = (
+            '- "style" applies to PHOTO clips only (VIDEO clips are always full-frame — omit or use "full"):\n'
+            '    "card" = the photo snaps up on a small card OVER the speaker (they stay on screen). '
+            "Use this when the speaker is listing or pointing to things — "
+            "'first the coffee... then the beans... then the machine' — quick punchy BAM inserts that punctuate the words.\n"
+            '    "full" = the photo fills the whole screen as a cutaway. Use when the photo IS the moment and the '
+            "face isn't needed for a beat (a single strong illustrative image).\n"
+            "    Default to \"card\" for punchy list/pointing mentions, \"full\" for one strong standalone image.\n")
     system = (
         "You are a senior video editor placing B-roll cutaways over a talking-head video "
         "(one person speaking to camera). Return STRICT JSON only: a list of placements.\n\n"
-        '[{"file": "<exact clip filename>", "quote": "<exact 2-5 word phrase from the transcript where this clip should START>", "duration_sec": 2.5}]\n\n'
+        '[{"file": "<exact clip filename>", "quote": "<exact 2-5 word phrase from the transcript where this clip should START>", "duration_sec": 2.5, "style": "card"}]\n\n'
         "THE BAR FOR PLACING A CLIP IS HIGH. Place a clip ONLY when its VISUAL CONTENT literally and "
         "specifically shows the object, action, place, or concept being spoken at that exact moment. "
         "A vague thematic, emotional, or 'kind of related' connection is NOT enough.\n"
@@ -640,7 +666,7 @@ def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
         "- Returning an EMPTY list [] is a correct, GOOD answer when nothing strongly fits. It is far better "
         "to place NOTHING than to place a clip that doesn't clearly match. Do NOT force placements.\n"
         "- The quote MUST be copied verbatim from the transcript (2-5 consecutive words) so it can be located.\n"
-        + count_rule +
+        + count_rule + photo_rule +
         "- duration_sec between 1.5 and 3.5.\n"
         "- A clip may be reused only if it strongly fits multiple distinct moments."
     )
@@ -1124,6 +1150,10 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             # Manual fine-tuning deltas set via the job chat (auto-match, then adjust)
             broll_remove = job.get("broll_remove", [])
             broll_add    = job.get("broll_add", [])
+            # Photo style: "cards" forces every photo to pop up as a card (BAM);
+            # "auto" (default) lets the AI pick card vs full-frame per photo.
+            broll_style  = str(job.get("broll_style", "auto") or "auto").lower()
+            force_cards  = broll_style in ("card", "cards", "pop", "popin", "pop-in", "bam")
 
             if anthropic_key:
                 _check_cancelled(job_path)
@@ -1134,7 +1164,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 _log(job_path, "B-roll: matching clips to the transcript...")
                 placements = _plan_broll(source_map, tags, palmier_instructions or "",
                                          anthropic_key, lambda m: _log(job_path, m),
-                                         desired_count=broll_count)
+                                         desired_count=broll_count, force_cards=force_cards)
 
                 # Apply chat REMOVALS: drop any auto placement the user took out
                 def _is_removed(p: dict) -> bool:
@@ -1172,17 +1202,34 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                         return
                     seg_i = max((i for i, off in enumerate(edl_off) if off <= t), default=0)
                     dur = max(1.5, min(3.5, float(p.get("duration_sec", 2.5))))
-                    broll_entries.append({
+                    is_img = _is_broll_image(fname)
+                    mode = "full"
+                    if is_img:
+                        mode = str(p.get("style", "full") or "full").lower()
+                        if mode not in ("card", "full"):
+                            mode = "full"
+                        if force_cards:
+                            mode = "card"
+                    entry = {
                         "file":            f"broll/{fname}",
                         "start_in_output": round(edl_off[seg_i], 3),
                         "delay":           round(t - edl_off[seg_i], 3),
                         "span":            1,
                         "duration":        dur,
-                    })
+                    }
+                    if is_img:
+                        entry["is_image"] = True
+                        entry["mode"] = mode
+                    broll_entries.append(entry)
                     placed_ts.append(t)
-                    broll_summary.append({"file": fname, "at_sec": round(t, 1),
-                                          "duration": dur, "quote": p.get("quote", ""), "source": source})
-                    _log(job_path, f"B-roll: '{fname}' at {t:.1f}s (on '{p.get('quote')}') for {dur:.1f}s [{source}]")
+                    summ = {"file": fname, "at_sec": round(t, 1),
+                            "duration": dur, "quote": p.get("quote", ""), "source": source}
+                    if is_img:
+                        summ["kind"] = "photo"
+                        summ["style"] = mode
+                    broll_summary.append(summ)
+                    kind_txt = f" [photo/{mode}]" if is_img else ""
+                    _log(job_path, f"B-roll: '{fname}' at {t:.1f}s (on '{p.get('quote')}') for {dur:.1f}s [{source}]{kind_txt}")
 
                 # Auto-matched first (respecting count + spacing)
                 for p in placements:

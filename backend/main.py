@@ -320,7 +320,8 @@ def delete_client(client_id: str):
 
 # ── B-roll library ────────────────────────────────────────────────────────
 
-BROLL_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+BROLL_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+BROLL_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"} | BROLL_IMAGE_EXTS
 
 
 def _client_broll_dir(client_id: str) -> Path:
@@ -357,9 +358,9 @@ async def upload_broll(client_id: str, file: UploadFile = File(...)):
     safe_name = Path(file.filename).name  # strip any directory components
     if not safe_name:
         raise HTTPException(400, "Invalid filename")
-    # Only accept recognised video files (also blocks writing e.g. ".env" / ".py")
+    # Only accept recognised video/image files (also blocks writing e.g. ".env" / ".py")
     if Path(safe_name).suffix.lower() not in BROLL_EXTS:
-        raise HTTPException(400, "Only video files are allowed")
+        raise HTTPException(400, "Only video or image files are allowed")
     dest = folder / safe_name
     async with aiofiles.open(dest, "wb") as f:
         await f.write(await file.read())
@@ -1388,6 +1389,10 @@ For B-ROLL changes: call list_broll first to see what's currently in the video a
 available, then use add_broll / remove_broll. B-roll is auto-matched by the AI, and your edits
 fine-tune it — additions and removals persist across re-renders. Use reset_broll to go back to pure
 auto-matching. To place a clip, give a short exact quote from the transcript for the moment it should appear.
+PHOTOS (still images) can show two ways: a "card" that pops up over the speaker (BAM), or "full" screen.
+The AI picks per photo by default; pass style on add_broll to force one. If the user wants every photo to
+pop up as a card (e.g. "make all the pictures pop in", "always use the BAM effect"), call set_photo_style
+with mode "cards"; use "auto" to hand the choice back to the AI.
 
 After applying any change, tell the user in one sentence what changed. The re-render starts automatically.
 
@@ -1444,8 +1449,20 @@ _JOB_CHAT_TOOLS = [
                 "file":         {"type": "string",  "description": "Exact clip filename from this client's library (see list_broll)"},
                 "quote":        {"type": "string",  "description": "2–5 word exact phrase from the transcript where the clip should start"},
                 "duration_sec": {"type": "number",  "description": "How long to show it, 1.5–3.5 seconds (default 2.5)"},
+                "style":        {"type": "string",  "enum": ["card", "full"], "description": "PHOTO clips only: 'card' pops it up over the speaker (BAM), 'full' fills the screen. Ignored for video clips."},
             },
             "required": ["file", "quote"],
+        },
+    },
+    {
+        "name": "set_photo_style",
+        "description": "Set how PHOTO B-roll is shown in this whole video. 'cards' forces every photo to pop up on a card over the speaker (the BAM effect). 'auto' lets the AI decide card vs full-frame per photo. Re-renders after.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["cards", "auto"], "description": "'cards' = always pop up as cards; 'auto' = AI decides per photo"},
+            },
+            "required": ["mode"],
         },
     },
     {
@@ -1557,7 +1574,7 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
         applied.append({"type": "job_rerendering", "job_id": job_id, "changes": changes})
         return {"ok": True, "changes": changes, "rerendering": True}
 
-    if tool_name in ("list_broll", "add_broll", "remove_broll", "reset_broll"):
+    if tool_name in ("list_broll", "add_broll", "remove_broll", "reset_broll", "set_photo_style"):
         if not job_id:
             return {"error": "No job context"}
         job_path = JOBS_DIR / f"{job_id}.json"
@@ -1587,6 +1604,9 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
                 return {"error": f"Clip '{fname}' is not in this client's B-roll library or Drive folder"}
             entry = {"file": fname, "quote": quote,
                      "duration_sec": max(1.5, min(3.5, float(tool_input.get("duration_sec", 2.5))))}
+            _style = (tool_input.get("style") or "").strip().lower()
+            if _style in ("card", "full"):
+                entry["style"] = _style
             adds = job.setdefault("broll_add", [])
             adds.append(entry)
             # If this clip+quote was previously removed, clear that removal
@@ -1621,6 +1641,14 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             _rerender_job(job, job_id)
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"broll": "reset to auto-match"}})
             return {"ok": True, "rerendering": True}
+
+        if tool_name == "set_photo_style":
+            mode = (tool_input.get("mode") or "auto").strip().lower()
+            mode = "cards" if mode in ("card", "cards", "pop", "bam", "popin", "pop-in") else "auto"
+            job["broll_style"] = mode
+            _rerender_job(job, job_id)
+            applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"photo_style": mode}})
+            return {"ok": True, "photo_style": mode, "rerendering": True}
 
     if tool_name == "list_clients":
         return [{"id": c["id"], "name": c["name"]} for c in load_clients()]

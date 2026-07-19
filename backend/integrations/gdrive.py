@@ -214,7 +214,8 @@ def _rfc3339_to_epoch(s):
         return None
 
 
-_BROLL_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+_BROLL_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v",
+               ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
 
 def download_broll(client_name: str, dest_dir: Path, log=lambda m: None) -> int:
