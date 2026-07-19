@@ -1155,7 +1155,7 @@ async function loadStyleSection(clientId) {
   try {
     const data = await api.get(`/api/clients/${clientId}/style-refs`);
     renderStyleRefs(data.clips || [], clientId);
-    renderStyleProfile(data.profile, (data.clips || []).length);
+    renderStyleProfile(data.profile, (data.clips || []).length, clientId);
   } catch {
     renderStyleProfile(null, 0);
   }
@@ -1174,20 +1174,28 @@ function renderStyleRefs(clips, clientId) {
     </div>`).join('');
 }
 
-function renderStyleProfile(profile, clipCount = 0) {
+function renderStyleProfile(profile, clipCount = 0, clientId = null) {
   if (!profile || !profile.summary) { els.styleProfile.hidden = true; return; }
   const row = (label, val) => val ? `<div class="style-row"><span class="style-k">${label}</span><span class="style-v">${escapeHtml(val)}</span></div>` : '';
   const feats = Array.isArray(profile.features) && profile.features.length
     ? `<ul class="style-features">${profile.features.map(f => `<li>${escapeHtml(f)}</li>`).join('')}</ul>` : '';
+  const isUpper = profile.caption_uppercase === true || String(profile.caption_uppercase).toLowerCase() === 'true';
   const applied = [];
   if (profile.grade_warmth && profile.grade_warmth !== 'neutral') applied.push(`${profile.grade_warmth} grade`);
   if (profile.grade_contrast && profile.grade_contrast !== 'normal') applied.push(`${profile.grade_contrast} contrast`);
   if (profile.grade_saturation && profile.grade_saturation !== 'normal') applied.push(`${profile.grade_saturation} colour`);
   if (profile.caption_size) applied.push(`${profile.caption_size} captions`);
+  if (profile.caption_position) applied.push(`${profile.caption_position} placement`);
+  if (isUpper) applied.push('ALL-CAPS captions');
+  if (profile.caption_text_color && String(profile.caption_text_color).toLowerCase() !== 'none') applied.push(`${profile.caption_text_color} text`);
+  if (profile.caption_highlight_color && String(profile.caption_highlight_color).toLowerCase() !== 'none') applied.push(`${profile.caption_highlight_color} highlight`);
+  if (profile.pacing && profile.pacing !== 'medium') applied.push(`${profile.pacing} cuts`);
   const appliedLine = applied.length
     ? `<div class="style-applied">✓ Auto-applied: ${escapeHtml(applied.join(' · '))}</div>` : '';
   const header = clipCount
     ? `<div class="style-header">Every video for this client now uses this style — drawn from ${clipCount} reference clip${clipCount !== 1 ? 's' : ''}:</div>` : '';
+  const reBtn = clientId
+    ? `<button class="btn btn-sm btn-outline" style="margin-top:12px" onclick="resyncStyle('${clientId}')">Re-apply latest style engine</button>` : '';
   els.styleProfile.hidden = false;
   els.styleProfile.innerHTML = `
     ${header}
@@ -1198,8 +1206,27 @@ function renderStyleProfile(profile, clipCount = 0) {
     ${row('Pacing', profile.pacing)}
     ${row('Energy', profile.energy)}
     ${row('Text/hooks', profile.text_overlays)}
-    ${appliedLine}`;
+    ${appliedLine}
+    ${reBtn}`;
 }
+
+async function resyncStyle(clientId) {
+  const prev = state.clients.find(x => x.id === clientId)?.style_profile;
+  els.styleProfile.innerHTML = `<div class="style-summary"><span class="brief-spinner"></span> Re-analyzing the reference clips with the latest style engine…</div>`;
+  try {
+    const r = await fetch(`/api/clients/${clientId}/style-refs/resynthesize`, { method: 'POST' });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || 'failed'); }
+    const d = await r.json();
+    renderStyleProfile(d.profile, (d.clips || []).length, clientId);
+    const c = state.clients.find(x => x.id === clientId);
+    if (c) c.style_profile = d.profile;
+    toast('Style refreshed — new caption placement, colours and pacing now apply', 'success');
+  } catch (e) {
+    toast('Could not re-analyze: ' + e.message, 'error');
+    renderStyleProfile(prev, 1, clientId);
+  }
+}
+window.resyncStyle = resyncStyle;
 
 async function uploadStyleRefs(clientId, files) {
   const n = files.length;
@@ -1219,7 +1246,7 @@ async function uploadStyleRefs(clientId, files) {
   }
   if (last) {
     renderStyleRefs(last.clips || [], clientId);
-    renderStyleProfile(last.profile, (last.clips || []).length);
+    renderStyleProfile(last.profile, (last.clips || []).length, clientId);
     const c = state.clients.find(x => x.id === clientId);
     if (c) c.style_profile = last.profile;
     toast('Style references analyzed — this client’s edits now match that style', 'success');
@@ -1230,7 +1257,7 @@ async function deleteStyleRef(clientId, name) {
   try {
     const res = await api.del(`/api/clients/${clientId}/style-refs/${encodeURIComponent(name)}`);
     renderStyleRefs(res.clips || [], clientId);
-    renderStyleProfile(res.profile, (res.clips || []).length);
+    renderStyleProfile(res.profile, (res.clips || []).length, clientId);
     const c = state.clients.find(x => x.id === clientId);
     if (c) c.style_profile = res.profile || undefined;
   } catch (e) { toast('Could not remove clip: ' + e.message, 'error'); }

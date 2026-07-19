@@ -715,6 +715,38 @@ def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
 _DEFAULT_GRADE = ("colorlevels=rimax=0.92:gimax=0.92:bimax=0.88,"
                   "eq=saturation=1.0:contrast=1.02,unsharp=5:5:0.3:5:5:0.0")
 _CAPTION_SIZE  = {"small": 60, "medium": 74, "large": 92}
+# Where captions sit vertically in a 1080x1920 frame
+_CAPTION_Y     = {"top": 320, "center": 950, "middle": 950,
+                  "lower-third": 1300, "lower third": 1300, "lowerthird": 1300,
+                  "bottom": 1620}
+_COLOR_NAMES   = {
+    "white": "#ffffff", "black": "#000000", "yellow": "#ffef4a", "gold": "#ffd24a",
+    "amber": "#ffbf3a", "red": "#ff4a4a", "orange": "#ff9f43", "green": "#4ade80",
+    "lime": "#b6ff3a", "blue": "#46c8ff", "cyan": "#46c8ff", "teal": "#2dd4bf",
+    "purple": "#a855f7", "violet": "#7c74ff", "indigo": "#7c74ff",
+    "pink": "#ff6ad5", "magenta": "#ff4ae0",
+}
+
+
+def _color_to_hex(v, default: str = "") -> str:
+    """Accept a hex ('#fff'/'#ffffff'/'fff'/'ffffff') or a common colour name and
+    return a hex string. Unknown / 'none' -> default."""
+    if not v:
+        return default
+    s = str(v).strip().lower()
+    if s in ("none", "n/a", "na", ""):
+        return default
+    if re.fullmatch(r'#?[0-9a-f]{6}', s) or re.fullmatch(r'#?[0-9a-f]{3}', s):
+        return s if s.startswith("#") else "#" + s
+    for name, hexv in _COLOR_NAMES.items():
+        if name in s:
+            return hexv
+    return default
+
+
+def _truthy(v) -> bool:
+    return str(v).strip().lower() in (
+        "true", "1", "yes", "upper", "uppercase", "caps", "all caps", "all-caps", "allcaps")
 
 
 def _grade_from_style(style: dict) -> str:
@@ -740,7 +772,6 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
               filler_indices: dict | None = None) -> dict:
     editing = client.get("editing", {})
     speaker = editing.get("caption_speaker", "speaker_0")
-    GAP     = 0.5   # silence gap in seconds that splits a range
     MIN_DUR = 0.3   # ranges shorter than this are discarded
 
     # Precedence for grade + caption size:
@@ -749,6 +780,15 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
     #   3. Client default settings
     style      = client.get("style_profile") or {}
     directives = client.get("_directives", {})
+
+    # Pacing -> cut density: how long a pause must be before it gets trimmed.
+    # Faster style = trim more (shorter GAP); slower = keep natural pauses.
+    # Clamped so a bad read can never chop mid-word or leave dead air.
+    pacing = str(directives.get("pacing") or style.get("pacing") or "").strip().lower()
+    if "fast" in pacing:   GAP = 0.30
+    elif "slow" in pacing: GAP = 0.80
+    else:                  GAP = 0.50
+    GAP = max(0.25, min(1.20, GAP))
 
     def _pick_grade(key, default):
         return directives.get(key) or style.get(key) or default
@@ -769,6 +809,17 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
         cap_size = _CAPTION_SIZE.get(style["caption_size"].lower(), cap_size)
     if directives.get("caption_size"):
         cap_size = _CAPTION_SIZE.get(directives["caption_size"].lower(), cap_size)
+
+    # Caption vertical position: directive > style reference > client default. Clamped
+    # to stay on-screen and clear of the very top/bottom safe areas.
+    cap_y = editing.get("caption_y", 1300)
+    pos = str(directives.get("caption_position") or style.get("caption_position") or "").strip().lower()
+    if pos:
+        cap_y = _CAPTION_Y.get(pos, cap_y)
+    cap_y = max(240, min(1680, int(cap_y)))
+
+    # ALL-CAPS captions if the reference uses them (or a mandatory directive asks)
+    cap_upper = _truthy(directives.get("caption_uppercase")) or _truthy(style.get("caption_uppercase"))
 
     ranges = []
     for name, s in source_map.items():
@@ -807,10 +858,15 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
     accent_color = brand.get("accent_color", "")
 
     # Caption body color: a mandatory directive wins (e.g. "only red captions"),
-    # then the client's explicit setting, then white.
-    caption_color = directives.get("caption_color") or editing.get("caption_color", "") or "#ffffff"
-    # Keyword emphasis color: directive wins, else brand accent.
-    highlight_color = directives.get("highlight_color") or accent_color or ""
+    # then the analyzed reference clip, then the client's explicit setting, then white.
+    caption_color = (directives.get("caption_color")
+                     or _color_to_hex(style.get("caption_text_color"))
+                     or editing.get("caption_color", "")
+                     or "#ffffff")
+    # Karaoke / emphasis word color: directive > reference clip > brand accent.
+    highlight_color = (directives.get("highlight_color")
+                       or _color_to_hex(style.get("caption_highlight_color"))
+                       or accent_color or "")
 
     edl: dict = {
         "version": 1,
@@ -822,10 +878,11 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
             "captions": {
                 "speaker":         speaker,
                 "font_size":       cap_size,
-                "y":               editing.get("caption_y", 1300),
+                "y":               cap_y,
                 "max_width":       editing.get("caption_max_width", 960),
                 "color":           caption_color,
                 "highlight_color": highlight_color,
+                "uppercase":       cap_upper,
                 "keywords":        keywords or [],   # keyword-emphasis mode
             },
         },
@@ -1075,6 +1132,18 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                         zoom_enabled=zoom_enabled,
                         zoom_strength=zoom_strength,
                         filler_indices=filler_indices)
+
+        # Log exactly which reference-style choices were applied to this render
+        _sp = client.get("style_profile") or {}
+        if _sp.get("summary") or _sp.get("features"):
+            _cap = edl.get("style", {}).get("captions", {})
+            _pos = str(_sp.get("caption_position") or "").strip() or "default"
+            _pace = str(_sp.get("pacing") or "medium").strip()
+            _log(job_path,
+                 f"Style match: captions {_pos} @ y={_cap.get('y')} size {_cap.get('font_size')}"
+                 f"{' ALL-CAPS' if _cap.get('uppercase') else ''}, "
+                 f"text {_cap.get('color')} / highlight {_cap.get('highlight_color') or 'none'}, "
+                 f"pacing {_pace}")
 
         # Apply per-job overrides (set via the job chat) on top of the generated EDL
         overrides = job.get("job_overrides", {})

@@ -327,6 +327,8 @@ def build_captions(edit, edl):
 
     f_cap = font(fonts["caption"], cs.get("font_size", 60))
     cy, max_w = cs.get("y", 1300), cs.get("max_width", 960)
+    UP = bool(cs.get("uppercase"))
+    def _disp(t): return t.upper() if UP else t   # display-only ALL CAPS (karaoke stays synced)
     raw_color = cs.get("color", "#ffffff")
     cap_color = hex_to_rgba(raw_color) if isinstance(raw_color, str) else tuple(raw_color)
     raw_hl = cs.get("highlight_color", "")
@@ -340,10 +342,10 @@ def build_captions(edit, edl):
         toks = [tw for tw in timed if st - EPS <= tw["s"] < en - EPS]
         if not toks:
             crop, (ccx, ccy) = crop_to_content(
-                render_caption_image(txt, f_cap, cy, max_w, cap_color, hl_color))
+                render_caption_image(_disp(txt), f_cap, cy, max_w, cap_color, hl_color))
             built.append((st, en, [], [(crop, ccx, ccy)]))
             continue
-        line_text = " ".join(t["t"] for t in toks)
+        line_text = _disp(" ".join(t["t"] for t in toks))
         variants = []
         for active in range(-1, len(toks)):
             crop, (ccx, ccy) = crop_to_content(

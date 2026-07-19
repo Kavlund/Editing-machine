@@ -710,6 +710,10 @@ _STYLE_PROMPT = """These are frames sampled from a short-form video the creator 
   "grade_contrast": "low | normal | high",
   "grade_saturation": "muted | normal | vivid",
   "caption_size": "small | medium | large",
+  "caption_position": "top | center | lower-third | bottom",
+  "caption_text_color": "the main caption word colour as a hex like #ffffff, or a common colour name (white/yellow/black...); 'none' if there are no captions",
+  "caption_highlight_color": "the colour of the emphasised / currently-spoken (karaoke) word as a hex or colour name; 'none' if the words never change colour",
+  "caption_uppercase": true,
   "summary": "2-3 sentence overall style description an editor could follow to match this look"
 }"""
 
@@ -760,7 +764,7 @@ def _analyze_reference_style(content: bytes) -> dict:
         return json.loads(m.group())
 
 
-_STYLE_SYNTH_PROMPT = """You are given style analyses of several short clips a creator uploaded as inspiration — videos they like and want their OWN edits to match. Synthesize ONE combined style profile that captures their preferred style: find the common thread, and where clips differ pick the dominant / most-repeated look. Return ONLY strict JSON:
+_STYLE_SYNTH_PROMPT = """You are given style analyses of several short clips a creator uploaded as inspiration — videos they like and want their OWN edits to match. Synthesize ONE combined style profile that captures their preferred style: find the common thread, and where clips differ pick the dominant / most-repeated look. Infer the structured caption fields (position, colours, uppercase) from the per-clip caption descriptions. Return ONLY strict JSON:
 {
   "caption_style": "one sentence on the captions they favour",
   "color_mood": "the colour grade / mood they favour",
@@ -771,6 +775,10 @@ _STYLE_SYNTH_PROMPT = """You are given style analyses of several short clips a c
   "grade_contrast": "low | normal | high",
   "grade_saturation": "muted | normal | vivid",
   "caption_size": "small | medium | large",
+  "caption_position": "top | center | lower-third | bottom",
+  "caption_text_color": "the main caption word colour as hex or a common colour name; 'none' if they use no captions",
+  "caption_highlight_color": "the karaoke / emphasis word colour as hex or colour name; 'none' if words never change colour",
+  "caption_uppercase": true,
   "summary": "2-3 sentence description of the creator's combined preferred style",
   "features": ["3-6 short plain-language bullets stating exactly what EVERY future video for this creator will now use, e.g. 'Bold centred karaoke captions', 'Warm, high-contrast colour grade', 'Fast, punchy cuts', 'Big all-caps hook text'"]
 }"""
@@ -860,6 +868,21 @@ async def upload_style_ref(client_id: str, file: UploadFile = File(...)):
     clips = [f.name for f in sorted(folder.iterdir())
              if f.is_file() and f.suffix.lower() in BROLL_EXTS]
     return {"clips": clips, "profile": combined}
+
+
+@app.post("/api/clients/{client_id}/style-refs/resynthesize")
+async def resynthesize_style_ref(client_id: str):
+    """Rebuild the combined style profile from the clips already analyzed — cheap
+    (no re-frame reading), so existing clients pick up newer style fields."""
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(400, "ANTHROPIC_API_KEY not set")
+    folder = _style_refs_dir(client_id)
+    if not _load_style_analyses(client_id):
+        raise HTTPException(400, "No reference clips analyzed yet for this client")
+    profile = await asyncio.to_thread(_resynthesize_style, client_id)
+    clips = [f.name for f in sorted(folder.iterdir())
+             if f.is_file() and f.suffix.lower() in BROLL_EXTS]
+    return {"ok": True, "clips": clips, "profile": profile}
 
 
 @app.delete("/api/clients/{client_id}/style-refs/{filename}")
