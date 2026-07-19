@@ -127,10 +127,12 @@ def _is_authenticated(request: Request) -> bool:
     return hmac.compare_digest(cookie, _session_token())
 
 
-_PUBLIC_PATHS = {"/login", "/api/auth/login", "/logo.png", "/logo-original.png",
-                 "/logo-rooney.png", "/favicon.ico"}
-# The branded logo shows on the login page, before auth — make sure it can load
-# whatever BRAND_LOGO points at (any local path), not just the defaults above.
+_PUBLIC_PATHS = {"/login", "/api/auth/login", "/logo.png", "/logo-original.png", "/favicon.ico"}
+# The branded logo shows on the login page, before auth. BRAND_LOGO is meant to
+# be set per-instance as a data: URI (see .env.example) so a brand's logo is a
+# config VALUE, never a file committed to this shared repo. A data: URI needs no
+# server request at all, so it works pre-auth automatically. If an instance ever
+# points BRAND_LOGO at a local path instead, allow that path through too.
 if BRAND_LOGO.startswith("/"):
     _PUBLIC_PATHS.add(BRAND_LOGO)
 
