@@ -127,7 +127,12 @@ def _is_authenticated(request: Request) -> bool:
     return hmac.compare_digest(cookie, _session_token())
 
 
-_PUBLIC_PATHS = {"/login", "/api/auth/login", "/logo.png", "/logo-original.png", "/favicon.ico"}
+_PUBLIC_PATHS = {"/login", "/api/auth/login", "/logo.png", "/logo-original.png",
+                 "/logo-rooney.png", "/favicon.ico"}
+# The branded logo shows on the login page, before auth — make sure it can load
+# whatever BRAND_LOGO points at (any local path), not just the defaults above.
+if BRAND_LOGO.startswith("/"):
+    _PUBLIC_PATHS.add(BRAND_LOGO)
 
 
 @app.middleware("http")
