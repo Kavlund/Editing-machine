@@ -1149,9 +1149,14 @@ async function loadBroll(clientId) {
 // ── Style references (multiple clips → one combined style) ──────────────────
 
 async function loadStyleSection(clientId) {
-  if (!clientId) { els.styleSection.hidden = true; return; }
+  if (!clientId) {
+    els.styleSection.hidden = true;
+    const ms = $('memory-section'); if (ms) ms.hidden = true;
+    return;
+  }
   els.styleSection.hidden = false;
   els.styleList.innerHTML = '';
+  loadClientMemory(clientId);          // what this creator has taught us
   try {
     const data = await api.get(`/api/clients/${clientId}/style-refs`);
     renderStyleRefs(data.clips || [], clientId);
@@ -1905,3 +1910,78 @@ ztEls.apply.addEventListener('click', async () => {
 $('zt-close-btn').addEventListener('click', ztClose);
 $('zt-cancel-btn').addEventListener('click', ztClose);
 ztEls.overlay.addEventListener('click', e => { if (e.target === ztEls.overlay) ztClose(); });
+
+// ── Per-creator style memory: learned habits, operator approves ────────────
+const MEM_CAT = { caption: 'Captions', grade: 'Colour', broll: 'B-roll & photos', zoom: 'Zooms' };
+
+async function loadClientMemory(clientId) {
+  const sec = $('memory-section'), panel = $('memory-panel');
+  if (!sec || !panel) return;
+  if (!clientId) { sec.hidden = true; return; }
+  try {
+    const d = await api.get(`/api/clients/${clientId}/memory`);
+    renderClientMemory(d, clientId);
+  } catch {
+    sec.hidden = true;
+  }
+}
+
+function renderClientMemory(d, clientId) {
+  const sec = $('memory-section'), panel = $('memory-panel');
+  const pending = d.pending || [], accepted = d.accepted || [];
+  if (!pending.length && !accepted.length) {
+    sec.hidden = false;
+    panel.innerHTML = `<div class="mem-empty">Nothing learned yet. Make a few edits to this client's videos and repeated changes will show up here.</div>`;
+    return;
+  }
+  sec.hidden = false;
+  const suggHtml = pending.map(s => `
+    <div class="mem-sugg">
+      <div class="mem-sugg-main">
+        <span class="mem-cat">${escapeHtml(MEM_CAT[s.category] || s.category)}</span>
+        <span class="mem-label">${escapeHtml(s.label)}</span>
+        <span class="mem-count">seen ${s.count}×</span>
+      </div>
+      <div class="mem-actions">
+        <button class="btn btn-sm btn-primary" onclick="acceptMemory('${clientId}','${s.id}')">Make default</button>
+        <button class="btn btn-sm btn-ghost" onclick="ignoreMemory('${clientId}','${s.id}')">Ignore</button>
+      </div>
+    </div>`).join('');
+  const accHtml = accepted.map(a => `
+    <div class="mem-acc">
+      <span class="mem-cat">${escapeHtml(MEM_CAT[a.category] || a.category)}</span>
+      <span class="mem-label">${escapeHtml(a.label)}</span>
+      <button class="btn-icon" title="Forget this" onclick="forgetMemory('${clientId}','${escapeHtml(a.key)}')">
+        <svg width="13" height="13" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+      </button>
+    </div>`).join('');
+  panel.innerHTML =
+    (pending.length ? `<div class="mem-head">Noticed a pattern</div>${suggHtml}` : '') +
+    (accepted.length ? `<div class="mem-head">Now their default</div>${accHtml}` : '');
+}
+
+async function acceptMemory(clientId, id) {
+  try {
+    await api.post(`/api/clients/${clientId}/memory/${id}/accept`, {});
+    toast('Saved as this client’s default for future videos', 'success');
+    loadClientMemory(clientId);
+  } catch (e) { toast('Could not save: ' + e.message, 'error'); }
+}
+async function ignoreMemory(clientId, id) {
+  try {
+    await api.post(`/api/clients/${clientId}/memory/${id}/ignore`, {});
+    loadClientMemory(clientId);
+  } catch (e) { toast('Could not ignore: ' + e.message, 'error'); }
+}
+async function forgetMemory(clientId, key) {
+  if (!await confirmDialog('Forget this learned preference? Future videos go back to the normal default.', 'Forget')) return;
+  try {
+    await api.del(`/api/clients/${clientId}/memory/${encodeURIComponent(key)}`);
+    toast('Forgotten', 'success');
+    loadClientMemory(clientId);
+  } catch (e) { toast('Could not forget: ' + e.message, 'error'); }
+}
+window.acceptMemory = acceptMemory;
+window.ignoreMemory = ignoreMemory;
+window.forgetMemory = forgetMemory;
+window.loadClientMemory = loadClientMemory;

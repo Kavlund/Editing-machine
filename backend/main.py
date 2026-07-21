@@ -20,6 +20,7 @@ except ImportError:
     pass
 
 from pipeline import run_pipeline
+import client_memory
 
 # ── Config from environment ───────────────────────────────────────────────
 
@@ -218,6 +219,25 @@ def load_clients() -> list:
 
 def save_clients(clients: list):
     CLIENTS_FILE.write_text(json.dumps(clients, indent=2))
+
+
+def _remember(job: dict, changes: dict):
+    """Record per-video tweaks against THIS creator's style memory (never shared
+    across clients). Raises a suggestion once a tweak repeats. Best-effort: a
+    memory failure must never break an edit or a render."""
+    try:
+        cid = job.get("client_id", "")
+        if not cid or not changes:
+            return
+        c = get_client(cid) or {}
+        defaults = dict(c.get("editing", {}))
+        defaults.setdefault("broll_style", "auto")
+        client_memory.record(
+            DATA_ROOT, cid, changes,
+            job_id=job.get("id", ""), job_name=job.get("folder_name", ""),
+            client_defaults=defaults)
+    except Exception:
+        pass
 
 
 def get_client(client_id: str) -> Optional[dict]:
@@ -870,6 +890,72 @@ async def upload_style_ref(client_id: str, file: UploadFile = File(...)):
     return {"clips": clips, "profile": combined}
 
 
+# ── Per-creator style memory ───────────────────────────────────────────────
+
+# Which client field an accepted preference is written into
+_MEM_TARGET = {
+    "caption_y": "editing", "caption_font_size": "editing", "caption_max_width": "editing",
+    "caption_color": "editing", "highlight_color": "editing", "grade": "editing",
+    "broll_count": "editing", "broll_style": "editing",
+    "zoom_strength": "editing", "zoom_count": "editing",
+}
+
+
+@app.get("/api/clients/{client_id}/memory")
+def get_client_memory(client_id: str):
+    """What we've learned about this creator: pending suggestions + accepted defaults."""
+    if not get_client(client_id):
+        raise HTTPException(404, "Client not found")
+    mem = client_memory.load(DATA_ROOT, client_id)
+    return {
+        "pending":  [s for s in mem["suggestions"] if s["status"] == "pending"],
+        "accepted": mem["accepted"],
+        "observations": len(mem["observations"]),
+    }
+
+
+@app.post("/api/clients/{client_id}/memory/{suggestion_id}/accept")
+def accept_client_memory(client_id: str, suggestion_id: str):
+    """Promote a learned habit to this creator's default for all future videos."""
+    if not get_client(client_id):
+        raise HTTPException(404, "Client not found")
+    s = client_memory.accept(DATA_ROOT, client_id, suggestion_id)
+    if not s:
+        raise HTTPException(404, "Suggestion not found or already handled")
+    if _MEM_TARGET.get(s["key"]) == "editing":
+        clients = load_clients()
+        for i, c in enumerate(clients):
+            if c["id"] == client_id:
+                clients[i].setdefault("editing", {})[s["key"]] = s["value"]
+                save_clients(clients)
+                break
+    return {"ok": True, "applied": s}
+
+
+@app.post("/api/clients/{client_id}/memory/{suggestion_id}/ignore")
+def ignore_client_memory(client_id: str, suggestion_id: str):
+    if not get_client(client_id):
+        raise HTTPException(404, "Client not found")
+    if not client_memory.ignore(DATA_ROOT, client_id, suggestion_id):
+        raise HTTPException(404, "Suggestion not found or already handled")
+    return {"ok": True}
+
+
+@app.delete("/api/clients/{client_id}/memory/{key}")
+def forget_client_memory(client_id: str, key: str):
+    """Drop a learned preference so this creator's style can move on."""
+    if not get_client(client_id):
+        raise HTTPException(404, "Client not found")
+    client_memory.forget(DATA_ROOT, client_id, key)
+    clients = load_clients()
+    for i, c in enumerate(clients):
+        if c["id"] == client_id:
+            clients[i].get("editing", {}).pop(key, None)
+            save_clients(clients)
+            break
+    return {"ok": True}
+
+
 @app.post("/api/clients/{client_id}/style-refs/resynthesize")
 async def resynthesize_style_ref(client_id: str):
     """Rebuild the combined style profile from the clips already analyzed — cheap
@@ -961,6 +1047,11 @@ async def trigger_pipeline(job_id: str, request: Request):
                 job["broll_count"] = max(0, int(bc))
             except (ValueError, TypeError):
                 job.pop("broll_count", None)
+
+    # Learn how much B-roll this creator actually asks for (an explicit number only;
+    # "ai" means they are happy to let it decide, which is not a preference).
+    if "broll_count" in job:
+        _remember(job, {"broll_count": job["broll_count"]})
 
     # On re-render, refresh the client snapshot so updated settings take effect
     fresh_client = get_client(job.get("client_id", ""))
@@ -1072,6 +1163,11 @@ async def set_job_zooms(job_id: str, request: Request):
     job["zoom_remove"] = []
     job["zoom_manual"] = True   # timeline overrides the AI's auto-zoom guesses
     _rerender_job(job, job_id)
+    if clean:                   # learn how many zooms and how strong they like them
+        _remember(job, {
+            "zoom_count":    len(clean),
+            "zoom_strength": round(sum(z["strength"] for z in clean) / len(clean), 3),
+        })
     return {"ok": True, "zooms": clean, "rerendering": True}
 
 
@@ -1707,6 +1803,7 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
                 overrides[key] = tool_input[key]
                 changes[key] = tool_input[key]
         _rerender_job(job, job_id)
+        _remember(job, changes)          # learn this creator's caption/grade habits
         applied.append({"type": "job_rerendering", "job_id": job_id, "changes": changes})
         return {"ok": True, "changes": changes, "rerendering": True}
 
@@ -1783,6 +1880,7 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             mode = "cards" if mode in ("card", "cards", "pop", "bam", "popin", "pop-in") else "auto"
             job["broll_style"] = mode
             _rerender_job(job, job_id)
+            _remember(job, {"broll_style": mode})    # learn photo habits
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"photo_style": mode}})
             return {"ok": True, "photo_style": mode, "rerendering": True}
 
@@ -1819,6 +1917,7 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             job["zoom_remove"] = [r for r in job.get("zoom_remove", [])
                                   if abs(float(r.get("at", -999)) - at) >= 0.4]
             _rerender_job(job, job_id)
+            _remember(job, {"zoom_strength": entry["strength"]})   # learn zoom habits
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"zoom_added": entry}})
             return {"ok": True, "added": entry, "rerendering": True}
 
@@ -1882,6 +1981,10 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
         if job_path.exists():
             j = json.loads(job_path.read_text())
             system += f"\n\nJob: {j.get('folder_name','untitled')} | Client: {j.get('client_name','')}"
+            # Everything this creator has taught us, so the edit is tailored to them
+            _mem = client_memory.summary(DATA_ROOT, j.get("client_id", ""))
+            if _mem:
+                system += "\n\n" + _mem
         tools = _JOB_CHAT_TOOLS
     else:
         # Global mode: edit client default settings
@@ -1895,6 +1998,9 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
                 if c.get("icp"):    lines.append(f"ICP: {c['icp']}")
                 if c.get("cta_text"): lines.append(f"CTA: {c['cta_text']}")
                 system += "\n".join(lines)
+                _mem = client_memory.summary(DATA_ROOT, client_id)
+                if _mem:
+                    system += "\n\n" + _mem
         tools = _CHAT_TOOLS
 
     applied: list = []
