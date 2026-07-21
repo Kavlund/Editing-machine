@@ -1587,6 +1587,16 @@ The AI picks per photo by default; pass style on add_broll to force one. If the 
 pop up as a card (e.g. "make all the pictures pop in", "always use the BAM effect"), call set_photo_style
 with mode "cards"; use "auto" to hand the choice back to the AI.
 
+PASTED SCRIPTS — recognise these, they are common and easy to misread as an instruction:
+If the user's message is a long block of prose that reads like the words the person SPEAKS in the video
+(multiple sentences, talking-head delivery, no editing request in it), that is the script — not a command.
+Call use_pasted_script with NO arguments; the text is picked up automatically, so never retype it back.
+Then tell them in one line that the script is saved and every spoken word not in it will be cut as a
+hesitation or false start. Signals it's a script: it narrates a topic, uses "you"/"your", runs several
+paragraphs, and asks you for nothing. Signals it's an instruction instead: it is short, imperative, and
+describes a change ("move the captions up", "add a zoom at 8 seconds"). If genuinely unsure, ask once
+whether it is the spoken script before saving it. Use clear_script to go back to automatic filler detection.
+
 For ZOOM changes: a punch-in zoom snaps the frame tighter at a moment, holds, then eases back. When the user
 says "zoom at 8 seconds", "punch in at 0:12", or "add a zoom when…", call add_zoom with at_sec in seconds
 (convert mm:ss to seconds). Call list_zooms first if they want to move or remove one; use remove_zoom at the
@@ -1714,6 +1724,29 @@ _JOB_CHAT_TOOLS = [
         "description": "Remove ALL punch-in zooms currently in this video, then re-render with no zooms.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
+    {
+        "name": "use_pasted_script",
+        "description": (
+            "The user pasted the script the person actually speaks in this video. Save it as the "
+            "ground truth for the edit and re-render: every spoken word that is NOT in the script "
+            "is treated as a hesitation, filler or false start and gets cut, which produces a much "
+            "tighter edit (and works in any language, including Danish). "
+            "IMPORTANT: call this with NO arguments — the pasted text is picked up automatically. "
+            "Do not retype or echo the script back, it can be thousands of words."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "script": {"type": "string", "description": "Only use if the script came from somewhere other than the user's last message. Normally omit this."},
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "clear_script",
+        "description": "Remove the saved script from this video so filler cutting goes back to automatic detection, then re-render.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
 ]
 
 
@@ -1768,7 +1801,8 @@ def _broll_choices(client_id: str, client_name: str) -> tuple:
     return names, choices
 
 
-def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Optional[str] = None) -> dict:
+def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Optional[str] = None,
+                    user_message: str = "") -> dict:
     if tool_name == "get_job_edl":
         if not job_id:
             return {"error": "No job context"}
@@ -1883,6 +1917,35 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             _remember(job, {"broll_style": mode})    # learn photo habits
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"photo_style": mode}})
             return {"ok": True, "photo_style": mode, "rerendering": True}
+
+    if tool_name in ("use_pasted_script", "clear_script"):
+        if not job_id:
+            return {"error": "No job context"}
+        job_path = JOBS_DIR / f"{job_id}.json"
+        if not job_path.exists():
+            return {"error": "Job not found"}
+        job = json.loads(job_path.read_text())
+
+        if tool_name == "use_pasted_script":
+            # Prefer the user's pasted message so the model never has to echo a
+            # long script back through its own token budget.
+            script = (tool_input.get("script") or user_message or "").strip()
+            if len(script.split()) < 20:
+                return {"error": "That doesn't look like a full script (too short). "
+                                 "Ask the user to paste the whole spoken script."}
+            job["script"] = script
+            _rerender_job(job, job_id)
+            words = len(script.split())
+            applied.append({"type": "job_rerendering", "job_id": job_id,
+                            "changes": {"script_set": f"{words} words"}})
+            return {"ok": True, "words": words, "rerendering": True,
+                    "note": "Script saved. Spoken words not in the script are now cut as filler/false starts."}
+
+        if tool_name == "clear_script":
+            job.pop("script", None)
+            _rerender_job(job, job_id)
+            applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"script": "cleared"}})
+            return {"ok": True, "rerendering": True}
 
     if tool_name in ("list_zooms", "add_zoom", "remove_zoom", "clear_zooms"):
         if not job_id:
@@ -2012,6 +2075,13 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
 
     applied: list = []
     loop_msgs = list(messages)
+    # The raw text the user just sent, so a pasted script can be saved without the
+    # model having to echo it back through its own (much smaller) token budget.
+    last_user_text = ""
+    for _m in reversed(messages):
+        if _m.get("role") == "user" and isinstance(_m.get("content"), str):
+            last_user_text = _m["content"]
+            break
 
     for _ in range(8):
         try:
@@ -2039,7 +2109,7 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
                 if block.type == "tool_use":
                     # A broken tool must report back to the model, not 500 the chat.
                     try:
-                        result = _chat_tool_call(block.name, block.input, applied, job_id)
+                        result = _chat_tool_call(block.name, block.input, applied, job_id, last_user_text)
                     except Exception as e:
                         traceback.print_exc()
                         result = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
