@@ -197,7 +197,7 @@ def _interpret_directives(spec: str, anthropic_key: str, log_fn) -> dict:
     if not spec:
         return {}
     import anthropic as ant
-    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=1)
+    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=4)
     system = (
         "You convert a client's MANDATORY editing rules into concrete overrides. These rules "
         "OUTRANK every other setting. Only fill a field when the rules clearly require it; otherwise null.\n"
@@ -282,7 +282,7 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                         "Let this steer the hook's punchiness and whether a zoom/movement fits.\n")
 
     import anthropic as ant
-    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=1)
+    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=4)
     system = (
         "You are a senior short-form video editor. Read the creator's per-video instructions "
         "and the transcript, then output a concrete edit plan as STRICT JSON (no prose).\n\n"
@@ -381,7 +381,7 @@ def _identify_filler_words(source_map: dict, speaker: str | None,
     without having to enumerate every language's fillers.
     """
     import anthropic as ant
-    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=1)
+    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=4)
     result: dict[str, set] = {}
     script = (script or "").strip()
     has_script = bool(script)
@@ -536,7 +536,7 @@ def tag_broll_clips(broll_src: Path, clips: list, anthropic_key: str, log_fn, ca
         try: cache = json.loads(cache_path.read_text())
         except Exception: cache = {}
 
-    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=1)
+    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=4)
     tags: dict = {}
     tmp = broll_src / "_frames"
     tmp.mkdir(exist_ok=True)
@@ -646,7 +646,7 @@ def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
     if not transcript or not broll_tags:
         return []
     import anthropic as ant
-    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=1)
+    sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=4)
 
     catalog = "\n".join(
         f'- "{name}" [{"PHOTO" if _is_broll_image(name) else "VIDEO"}]: '

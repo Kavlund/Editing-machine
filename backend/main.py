@@ -643,7 +643,7 @@ def _extract_brief(content: bytes, media_type: str) -> dict:
     except ImportError:
         raise HTTPException(500, "anthropic package not installed")
 
-    sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=1)
+    sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=4)
 
     if media_type == "application/pdf":
         msg_content = [
@@ -774,7 +774,7 @@ def _analyze_reference_style(content: bytes) -> dict:
         blocks = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}}
                   for b in frames]
         blocks.append({"type": "text", "text": _STYLE_PROMPT})
-        sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=1)
+        sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=4)
         resp = sdk.messages.create(model="claude-sonnet-5", max_tokens=800,
                                    messages=[{"role": "user", "content": blocks}])
         raw = _resp_text(resp)
@@ -812,7 +812,7 @@ def _synthesize_style_profile(analyses: list) -> dict:
         import anthropic as ant
     except ImportError:
         return analyses[0]
-    sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=1)
+    sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=4)
     resp = sdk.messages.create(
         model="claude-sonnet-5", max_tokens=900,
         messages=[{"role": "user", "content":
@@ -2054,7 +2054,7 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
     except ImportError:
         return {"reply": "The anthropic package is not installed. Run: pip install anthropic", "actions": []}
 
-    sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=1)
+    sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=4)
 
     if job_id:
         # Job-scoped mode: only edit this video's EDL
@@ -2127,9 +2127,15 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
         except ant.AuthenticationError:
             return {"reply": "AI key is invalid or expired. Update ANTHROPIC_API_KEY in your .env and restart the server.", "actions": []}
         except ant.RateLimitError:
-            return {"reply": "Rate limit reached. Wait a moment and try again.", "actions": []}
+            return {"reply": "Rate limit reached. Wait a moment and try again.", "actions": applied}
+        except (ant.InternalServerError, ant.APIConnectionError):
+            # 529 overloaded / 5xx / network blip. The SDK already retried with
+            # backoff, so this is a sustained wobble on Anthropic's side.
+            return {"reply": "Claude is busy right now. Give it a few seconds and send that again — "
+                             "nothing was lost, and any changes already applied are safe.",
+                    "actions": applied}
         except Exception as e:
-            return {"reply": f"AI error: {str(e)[:200]}", "actions": []}
+            return {"reply": f"AI error: {str(e)[:200]}", "actions": applied}
 
         if resp.stop_reason == "end_turn":
             reply = "".join(b.text for b in resp.content if hasattr(b, "text"))
