@@ -1587,6 +1587,12 @@ The AI picks per photo by default; pass style on add_broll to force one. If the 
 pop up as a card (e.g. "make all the pictures pop in", "always use the BAM effect"), call set_photo_style
 with mode "cards"; use "auto" to hand the choice back to the AI.
 
+NEVER ASK FOR A SCRIPT THAT ALREADY EXISTS. The SCRIPT line in this job's context above tells you
+whether one is saved. Most videos are started WITH a script (it is attached in the Script field next to
+the upload, or alongside the video pulled from Drive), so assume it is there until the context says
+otherwise. If a script is saved and you need the exact wording, call get_script — do not ask the user to
+paste it again. Only ask for a script when the context explicitly says none is saved.
+
 PASTED SCRIPTS — recognise these, they are common and easy to misread as an instruction:
 If the user's message is a long block of prose that reads like the words the person SPEAKS in the video
 (multiple sentences, talking-head delivery, no editing request in it), that is the script — not a command.
@@ -1741,6 +1747,11 @@ _JOB_CHAT_TOOLS = [
             },
             "required": [],
         },
+    },
+    {
+        "name": "get_script",
+        "description": "Read the script already saved on this video (uploaded with the video, pulled from Drive, or pasted earlier). Use this instead of asking the user to paste it again.",
+        "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
         "name": "clear_script",
@@ -1918,7 +1929,7 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"photo_style": mode}})
             return {"ok": True, "photo_style": mode, "rerendering": True}
 
-    if tool_name in ("use_pasted_script", "clear_script"):
+    if tool_name in ("use_pasted_script", "clear_script", "get_script"):
         if not job_id:
             return {"error": "No job context"}
         job_path = JOBS_DIR / f"{job_id}.json"
@@ -1940,6 +1951,14 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
                             "changes": {"script_set": f"{words} words"}})
             return {"ok": True, "words": words, "rerendering": True,
                     "note": "Script saved. Spoken words not in the script are now cut as filler/false starts."}
+
+        if tool_name == "get_script":
+            script = (job.get("script") or "").strip()
+            if not script:
+                return {"has_script": False,
+                        "note": "No script saved on this video yet — ask the user to paste it, "
+                                "or to add it in the Script field when starting the video."}
+            return {"has_script": True, "words": len(script.split()), "script": script}
 
         if tool_name == "clear_script":
             job.pop("script", None)
@@ -2047,6 +2066,19 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
             try:
                 j = json.loads(job_path.read_text())
                 system += f"\n\nJob: {j.get('folder_name','untitled')} | Client: {j.get('client_name','')}"
+                # Tell the assistant whether a script is already on this video, so it
+                # never asks for one the user has already uploaded.
+                _scr = (j.get("script") or "").strip()
+                if _scr:
+                    _preview = " ".join(_scr.split())[:220]
+                    system += (
+                        f"\n\nSCRIPT: this video ALREADY HAS a saved script "
+                        f"({len(_scr.split())} words). Never ask the user to provide it. "
+                        f"Call get_script to read the full text when you need the exact wording. "
+                        f'It begins: "{_preview}…"')
+                else:
+                    system += ("\n\nSCRIPT: no script saved for this video yet. If the user pastes "
+                               "one, save it with use_pasted_script.")
                 _mem = client_memory.summary(DATA_ROOT, j.get("client_id", ""))
                 if _mem:
                     system += "\n\n" + _mem
