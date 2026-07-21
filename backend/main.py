@@ -1440,7 +1440,9 @@ _CHAT_TOOLS = [
                         "grade (ffmpeg vf string), "
                         "caption_font_size (int 20–120), "
                         "caption_y (int 100–1800), "
-                        "caption_max_width (int), "
+                        "caption_max_width (int — controls caption line breaks; lower it to force two lines), "
+                        "caption_color (hex, whole video), "
+                        "highlight_color (hex — the word-by-word karaoke animation colour), "
                         "language (en/da/es/fr/de/auto), "
                         "num_speakers (1 or 2)"
                     ),
@@ -1463,6 +1465,23 @@ Every change you make goes ONLY to this job's EDL and triggers an automatic re-r
 Do NOT call update_client_settings unless the user explicitly says "change for all future videos" or "set as default".
 
 For COLOR / CAPTION changes: call get_job_edl first, then update_job_edl.
+
+HOW THE CAPTIONS ACTUALLY WORK — read this before answering any caption question:
+- Captions are ALWAYS word-by-word karaoke synced. Every word lights up the instant it is spoken.
+  This is already on in every video; it is never something you need to "add".
+- highlight_color IS that word-by-word animation colour. If it equals caption_color the sweep is
+  invisible, which is why it can look like there is no animation. If someone asks for word-by-word
+  animation, highlighting, karaoke captions, or "make the words pop as I say them", the answer is to
+  set highlight_color to a colour that contrasts with caption_color. Never say it is unavailable.
+- caption_max_width controls LINE BREAKS. Captions word-wrap to that width, so lowering it (e.g.
+  960 -> 600) gives a two-line caption layout, and raising it keeps one line. If someone asks for
+  two-line captions, change caption_max_width. Never say it is unavailable.
+- caption_color and highlight_color apply to the WHOLE video. Per-caption or per-word colours (e.g.
+  "make just this one caption black") are genuinely NOT supported — say that plainly and offer the
+  video-wide change instead.
+NEVER tell the user to edit something manually in other editing software, and never claim a limit of
+"the automatic API". This product IS the editor. If something truly cannot be done, say exactly what
+cannot be done in one sentence and offer the closest thing that can.
 For B-ROLL changes: call list_broll first to see what's currently in the video and what clips are
 available, then use add_broll / remove_broll. B-roll is auto-matched by the AI, and your edits
 fine-tune it — additions and removals persist across re-renders. Use reset_broll to go back to pure
@@ -1511,9 +1530,9 @@ _JOB_CHAT_TOOLS = [
                 "grade":              {"type": "string",  "description": "Full ffmpeg grade string (colorlevels+eq+unsharp)"},
                 "caption_y":          {"type": "integer", "description": "Caption vertical position in pixels (100–1800, lower = higher on screen)"},
                 "caption_font_size":  {"type": "integer", "description": "Caption font size in pixels (20–120)"},
-                "caption_color":      {"type": "string",  "description": "Caption text color as hex e.g. #ffffff"},
-                "highlight_color":    {"type": "string",  "description": "First-word accent color as hex e.g. #F97316"},
-                "caption_max_width":  {"type": "integer", "description": "Max caption line width in pixels"},
+                "caption_color":      {"type": "string",  "description": "Colour of the caption words as hex e.g. #ffffff. Applies to the WHOLE video (there is no per-caption colour)."},
+                "highlight_color":    {"type": "string",  "description": "THE WORD-BY-WORD ANIMATION COLOUR. Captions are always karaoke word-synced: each word lights up in this colour the instant it is spoken. Set it to a colour different from caption_color to make that animation visible (e.g. #F97316); set it equal to caption_color for no visible sweep."},
+                "caption_max_width":  {"type": "integer", "description": "Max caption line width in pixels — THIS CONTROLS LINE BREAKS. Captions word-wrap to this width, so lowering it (e.g. 960 -> 600) is how you force a two-line caption layout; raising it keeps captions on one line."},
             },
             "required": [],
         },

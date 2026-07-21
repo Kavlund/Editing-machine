@@ -863,9 +863,10 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
                      or _color_to_hex(style.get("caption_text_color"))
                      or editing.get("caption_color", "")
                      or "#ffffff")
-    # Karaoke / emphasis word color: directive > reference clip > brand accent.
+    # Karaoke / emphasis word color: directive > reference clip > client setting > brand accent.
     highlight_color = (directives.get("highlight_color")
                        or _color_to_hex(style.get("caption_highlight_color"))
+                       or editing.get("highlight_color", "")
                        or accent_color or "")
 
     edl: dict = {
