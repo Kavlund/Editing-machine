@@ -1,4 +1,4 @@
-import os, sys, json, uuid, hmac, hashlib, secrets, threading, asyncio, base64, re, shutil
+import os, sys, json, uuid, hmac, hashlib, secrets, threading, asyncio, base64, re, shutil, traceback
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -1979,12 +1979,16 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
         system = _JOB_CHAT_SYSTEM.replace("__BRAND__", BRAND_NAME)
         job_path = JOBS_DIR / f"{job_id}.json"
         if job_path.exists():
-            j = json.loads(job_path.read_text())
-            system += f"\n\nJob: {j.get('folder_name','untitled')} | Client: {j.get('client_name','')}"
-            # Everything this creator has taught us, so the edit is tailored to them
-            _mem = client_memory.summary(DATA_ROOT, j.get("client_id", ""))
-            if _mem:
-                system += "\n\n" + _mem
+            # Job context and creator memory are both nice-to-have. Neither may
+            # ever take the chat down, so a failure here is swallowed.
+            try:
+                j = json.loads(job_path.read_text())
+                system += f"\n\nJob: {j.get('folder_name','untitled')} | Client: {j.get('client_name','')}"
+                _mem = client_memory.summary(DATA_ROOT, j.get("client_id", ""))
+                if _mem:
+                    system += "\n\n" + _mem
+            except Exception as e:
+                print(f"chat: could not load job context for {job_id}: {e}", file=sys.stderr)
         tools = _JOB_CHAT_TOOLS
     else:
         # Global mode: edit client default settings
@@ -1998,9 +2002,12 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
                 if c.get("icp"):    lines.append(f"ICP: {c['icp']}")
                 if c.get("cta_text"): lines.append(f"CTA: {c['cta_text']}")
                 system += "\n".join(lines)
-                _mem = client_memory.summary(DATA_ROOT, client_id)
-                if _mem:
-                    system += "\n\n" + _mem
+                try:
+                    _mem = client_memory.summary(DATA_ROOT, client_id)
+                    if _mem:
+                        system += "\n\n" + _mem
+                except Exception as e:
+                    print(f"chat: could not load creator memory for {client_id}: {e}", file=sys.stderr)
         tools = _CHAT_TOOLS
 
     applied: list = []
@@ -2030,7 +2037,12 @@ def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = 
             tool_results = []
             for block in resp.content:
                 if block.type == "tool_use":
-                    result = _chat_tool_call(block.name, block.input, applied, job_id)
+                    # A broken tool must report back to the model, not 500 the chat.
+                    try:
+                        result = _chat_tool_call(block.name, block.input, applied, job_id)
+                    except Exception as e:
+                        traceback.print_exc()
+                        result = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": block.id,
@@ -2066,8 +2078,17 @@ async def chat_endpoint(request: Request):
     job_id    = body.get("job_id") or None
     history   = body.get("history") or []
     messages  = history + [{"role": "user", "content": message}]
-    result    = await asyncio.to_thread(_run_chat, messages, client_id, job_id)
-    return result
+    try:
+        return await asyncio.to_thread(_run_chat, messages, client_id, job_id)
+    except Exception as e:
+        # Never return a bare 500 here — the UI can only show a generic
+        # "Something went wrong", which tells nobody anything. Surface the real
+        # cause in the reply and put the traceback in the server log.
+        traceback.print_exc()
+        return JSONResponse({
+            "reply": f"Chat failed: {type(e).__name__}: {str(e)[:300]}",
+            "actions": [],
+        })
 
 
 # ── Static (must be last) ─────────────────────────────────────────────────
