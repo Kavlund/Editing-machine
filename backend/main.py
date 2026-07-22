@@ -435,16 +435,24 @@ async def upload_footage(
     job_dir.mkdir(parents=True, exist_ok=True)
 
     saved, total_bytes = [], 0
-    for f in files:
-        safe_path = Path(f.filename).as_posix().lstrip("/")
-        dest = job_dir / safe_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(dest, "wb") as out:
-            while chunk := await f.read(1024 * 1024):
-                await out.write(chunk)
-        size = dest.stat().st_size
-        total_bytes += size
-        saved.append({"path": safe_path, "size": size})
+    try:
+        for f in files:
+            safe_path = Path(f.filename).as_posix().lstrip("/")
+            dest = job_dir / safe_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            async with aiofiles.open(dest, "wb") as out:
+                while chunk := await f.read(1024 * 1024):
+                    await out.write(chunk)
+            size = dest.stat().st_size
+            total_bytes += size
+            saved.append({"path": safe_path, "size": size})
+    except Exception:
+        # Upload aborted midway (browser navigated away, tab closed, connection
+        # dropped). The job JSON is only written below, so these half-written
+        # files would sit on the volume forever with nothing referencing them.
+        shutil.rmtree(job_dir, ignore_errors=True)
+        print(f"upload aborted for job {job_id} — partial files removed", file=sys.stderr)
+        raise
 
     job = {
         "id":              job_id,

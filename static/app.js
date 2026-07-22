@@ -413,9 +413,17 @@ function setProgress(pct) {
   });
 })();
 
+// An upload is an XHR owned by THIS page. Navigating away (e.g. to the Control
+// Center) unloads the page and silently kills the transfer, so the whole upload
+// is lost with no error. Track it and refuse to leave quietly.
+let uploadInFlight = 0;
+
 function uploadWithProgress(formData) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    uploadInFlight++;
+    const done = () => { uploadInFlight = Math.max(0, uploadInFlight - 1); };
+    xhr.addEventListener('loadend', done);
     xhr.upload.addEventListener('progress', e => {
       if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 95));
     });
@@ -1985,3 +1993,32 @@ window.acceptMemory = acceptMemory;
 window.ignoreMemory = ignoreMemory;
 window.forgetMemory = forgetMemory;
 window.loadClientMemory = loadClientMemory;
+
+// ── Don't lose an upload by navigating away ───────────────────────────────
+// The upload runs as an XHR on this page, so any navigation aborts it. Two
+// guards: the browser's own unload prompt (covers refresh, back, closing the
+// tab, typing a URL) and an in-app confirm for our own links, which can explain
+// what is actually at stake instead of the generic browser wording.
+window.addEventListener('beforeunload', e => {
+  if (uploadInFlight > 0) { e.preventDefault(); e.returnValue = ''; return ''; }
+});
+
+document.addEventListener('click', async e => {
+  if (uploadInFlight <= 0) return;
+  const link = e.target.closest('a[href]');
+  if (!link) return;
+  const href = link.getAttribute('href') || '';
+  // Ignore anchors, new tabs and non-navigating links
+  if (!href || href.startsWith('#') || link.target === '_blank') return;
+  if (link.hasAttribute('download')) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+  const ok = await confirmDialog(
+    'A video is still uploading. Leaving this page now cancels the upload and you will have to start it again.',
+    'Leave and cancel upload');
+  if (ok) {
+    uploadInFlight = 0;          // user chose to abandon it; skip the unload prompt
+    window.location.href = href;
+  }
+}, true);
