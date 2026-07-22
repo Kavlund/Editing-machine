@@ -431,7 +431,11 @@ function uploadWithProgress(formData) {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(JSON.parse(xhr.responseText));
       } else {
-        reject(new Error(`${xhr.status} ${xhr.statusText}`));
+        // Surface the server's actual explanation (e.g. "not enough space,
+        // delete old jobs") instead of a bare status code.
+        let detail = '';
+        try { detail = (JSON.parse(xhr.responseText) || {}).detail || ''; } catch {}
+        reject(new Error(detail || `${xhr.status} ${xhr.statusText}`));
       }
     });
     xhr.addEventListener('error', () => reject(new Error('Network error')));
@@ -1527,6 +1531,26 @@ async function init() {
   bindEvents();
   await loadClients();
   await loadJobs();
+  checkDiskSpace();
+}
+
+// A full volume makes uploads stall and renders fail. That used to be invisible
+// until something broke, so warn while there is still time to act.
+async function checkDiskSpace() {
+  try {
+    const d = await api.get('/api/admin/storage');
+    if (!d || typeof d.free_gb !== 'number' || d.free_gb > 1.0) return;
+    if (document.getElementById('disk-warning')) return;
+    const bar = document.createElement('div');
+    bar.id = 'disk-warning';
+    bar.className = 'disk-warning';
+    bar.innerHTML =
+      `<strong>Storage almost full</strong> — only ${d.free_gb.toFixed(2)} GB of ${d.total_gb} GB left. ` +
+      `Uploads will fail until you free space. ` +
+      `<a href="/setup.html">Open Control Center</a> to delete old jobs ` +
+      `(finished videos already in Drive are not affected).`;
+    document.body.prepend(bar);
+  } catch {}
 }
 
 init();

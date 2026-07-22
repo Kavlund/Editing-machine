@@ -416,8 +416,12 @@ def delete_broll(client_id: str, filename: str):
 
 # ── Upload ────────────────────────────────────────────────────────────────
 
+UPLOAD_HEADROOM = 600 * 1024 * 1024   # leave room for the render to work
+
+
 @app.post("/api/upload")
 async def upload_footage(
+    request:     Request,
     client_id:   str              = Form(...),
     folder_name: str              = Form("untitled"),
     notes:       str              = Form(""),
@@ -426,6 +430,24 @@ async def upload_footage(
     client = get_client(client_id)
     if not client:
         raise HTTPException(404, "Client not found")
+
+    # Refuse BEFORE writing a byte. On a full volume the writes stall and the
+    # upload sits on "Uploading..." forever with no error, which looks like the
+    # app is broken. Fail fast and say exactly what to do instead.
+    try:
+        incoming = int(request.headers.get("content-length") or 0)
+    except (TypeError, ValueError):
+        incoming = 0
+    try:
+        free = shutil.disk_usage(str(DATA_ROOT)).free
+    except Exception:
+        free = None
+    if free is not None and (free < UPLOAD_HEADROOM or (incoming and free < incoming + UPLOAD_HEADROOM)):
+        need_gb = (incoming + UPLOAD_HEADROOM) / 1e9 if incoming else UPLOAD_HEADROOM / 1e9
+        raise HTTPException(507, (
+            f"Not enough space on the disk. {free/1e9:.2f} GB free, this upload needs about "
+            f"{need_gb:.2f} GB. Open Control Center and delete old jobs (their finished videos "
+            f"in Drive are not affected), then try again."))
 
     # Save the uploaded footage to the volume. Simple and reliable — no dependency
     # on Drive being connected. (The Drive-native path is the separate "Pull from
