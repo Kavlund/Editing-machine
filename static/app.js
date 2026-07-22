@@ -947,6 +947,9 @@ function renderJobs(jobs) {
 
     const isRunning  = RUNNING.has(j.status);
     const isDone     = j.status === 'done';
+    // A previously finished render that is still retrievable (Drive link or a
+    // local file), regardless of what the current render is doing.
+    const hasPrevious = !isDone && Boolean(j.drive_link || j.output_path);
     const isFailed   = j.status === 'failed';
     const isCancelled = j.status === 'cancelled';
     const canRun     = j.status === 'uploaded' || isFailed || isCancelled;
@@ -994,9 +997,14 @@ function renderJobs(jobs) {
       isDone
         ? `<button class="btn btn-sm btn-outline" onclick="runPipeline('${j.id}')">Re-render</button>`
         : '',
+      // Fail-safe: once a video has rendered successfully it stays reachable,
+      // even while a re-render is running or after one fails. Hiding it made a
+      // finished video look permanently deleted whenever a re-render got stuck.
       isDone
         ? `<a class="btn btn-sm btn-outline" href="/api/jobs/${j.id}/download">Download</a>`
-        : '',
+        : (hasPrevious
+            ? `<a class="btn btn-sm btn-outline" href="/api/jobs/${j.id}/download" title="The last version that finished rendering">Download last version</a>`
+            : ''),
       isDone
         ? `<button class="btn btn-sm btn-outline" onclick="openZoomTimeline('${j.id}','${safeFolder}')">Zoom timeline</button>`
         : '',

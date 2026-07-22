@@ -1071,12 +1071,7 @@ async def trigger_pipeline(job_id: str, request: Request):
     job["log"] = []
     path.write_text(json.dumps(job, indent=2))
 
-    thread = threading.Thread(
-        target=run_pipeline,
-        args=(job_id, JOBS_DIR, UPLOADS_DIR, ELEVENLABS_API_KEY),
-        daemon=True,
-    )
-    thread.start()
+    _start_render(job_id)
     return {"status": "started"}
 
 
@@ -1101,10 +1096,13 @@ def download_output(job_id: str):
         raise HTTPException(404, "Job not found")
     job = json.loads(path.read_text())
 
-    if job.get("status") != "done":
-        raise HTTPException(400, "Job is not complete yet")
-
+    # Deliberately NOT gated on status == "done": if an earlier render finished,
+    # that video stays downloadable while a re-render runs or after one fails.
+    # Losing access to a good video because the next render broke is the worst
+    # possible failure mode.
     output_path = job.get("output_path") or ""
+    if not output_path and not job.get("drive_link"):
+        raise HTTPException(400, "This video hasn't finished rendering yet")
     if output_path and Path(output_path).exists():
         client_name = job.get("client_name", "client").replace(" ", "_")
         folder_name = job.get("folder_name", "video").replace(" ", "_")
@@ -1793,17 +1791,76 @@ _JOB_CHAT_TOOLS = [
 ]
 
 
+# ── Render scheduling ──────────────────────────────────────────────────────
+# Every render for a job uses ONE scratch dir (SCRATCH_ROOT/<job_id>) and wipes it
+# in a finally block. So two renders of the same job delete each other's files
+# mid-flight: the job never finishes, its status is overwritten on every write,
+# and the finished video disappears. Renders are therefore serialised per job.
+_RENDER_LOCK      = threading.Lock()
+_RENDERING: set   = set()    # job ids with a live render
+_RENDER_QUEUED: set = set()  # edits arrived mid-render -> run once more after
+_render_defer     = threading.local()   # per-chat-turn batching
+
+
+def _render_worker(job_id: str):
+    try:
+        run_pipeline(job_id, JOBS_DIR, UPLOADS_DIR, ELEVENLABS_API_KEY)
+    except Exception as e:
+        # The pipeline marks its own failures, but if it dies before it can, the
+        # job would sit on "rendering" forever with no error. Never leave a job
+        # in limbo — that is what looks like "nothing happens".
+        traceback.print_exc()
+        try:
+            p = JOBS_DIR / f"{job_id}.json"
+            j = json.loads(p.read_text())
+            if j.get("status") not in ("done", "failed", "cancelled"):
+                j["status"] = "failed"
+                j.setdefault("log", []).append(
+                    {"time": datetime.now().isoformat(),
+                     "msg": f"ERROR: render stopped unexpectedly — {type(e).__name__}: {str(e)[:200]}"})
+                p.write_text(json.dumps(j, indent=2))
+        except Exception:
+            traceback.print_exc()
+    finally:
+        with _RENDER_LOCK:
+            _RENDERING.discard(job_id)
+            again = job_id in _RENDER_QUEUED
+            _RENDER_QUEUED.discard(job_id)
+        if again:
+            try:
+                _start_render(job_id)
+            except Exception:
+                traceback.print_exc()
+
+
+def _start_render(job_id: str) -> bool:
+    """Start a render unless one is already running for this job. Returns True if
+    it started, False if it was queued behind the running one."""
+    with _RENDER_LOCK:
+        if job_id in _RENDERING:
+            _RENDER_QUEUED.add(job_id)      # collapse any number of requests into one
+            return False
+        _RENDERING.add(job_id)
+    threading.Thread(target=_render_worker, args=(job_id,), daemon=True).start()
+    return True
+
+
 def _rerender_job(job: dict, job_id: str):
-    """Kick off a background re-render for a job that was edited via chat."""
+    """Persist a chat edit and schedule ONE re-render.
+
+    During a chat turn the render is deferred: a single reply can call several
+    tools (caption size + two B-roll adds + a zoom), and each firing its own
+    render is what caused four renders to fight over one job.
+    """
     job_path = JOBS_DIR / f"{job_id}.json"
     job["status"] = "normalizing"
     job["log"]    = []
     job_path.write_text(json.dumps(job, indent=2))
-    threading.Thread(
-        target=run_pipeline,
-        args=(job_id, JOBS_DIR, UPLOADS_DIR, ELEVENLABS_API_KEY),
-        daemon=True,
-    ).start()
+    pending = getattr(_render_defer, "jobs", None)
+    if pending is not None:
+        pending.add(job_id)      # flushed once, after the whole chat turn
+        return
+    _start_render(job_id)
 
 
 def _broll_choices(client_id: str, client_name: str) -> tuple:
@@ -2101,6 +2158,25 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
 
 
 def _run_chat(messages: list, client_id: Optional[str], job_id: Optional[str] = None) -> dict:
+    """Run a chat turn, then kick off AT MOST ONE render for each job it touched.
+
+    A single reply often calls several tools (caption size, two B-roll adds, a
+    zoom). Rendering per tool call meant those renders raced on one scratch dir
+    and destroyed the job. Edits are collected here and flushed once."""
+    _render_defer.jobs = set()
+    try:
+        return _run_chat_inner(messages, client_id, job_id)
+    finally:
+        jobs = getattr(_render_defer, "jobs", None) or set()
+        _render_defer.jobs = None          # later renders in this thread are immediate
+        for jid in jobs:
+            try:
+                _start_render(jid)
+            except Exception:
+                traceback.print_exc()
+
+
+def _run_chat_inner(messages: list, client_id: Optional[str], job_id: Optional[str] = None) -> dict:
     try:
         import anthropic as ant
     except ImportError:
