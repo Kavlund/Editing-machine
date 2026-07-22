@@ -715,10 +715,11 @@ def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
 _DEFAULT_GRADE = ("colorlevels=rimax=0.92:gimax=0.92:bimax=0.88,"
                   "eq=saturation=1.0:contrast=1.02,unsharp=5:5:0.3:5:5:0.0")
 _CAPTION_SIZE  = {"small": 60, "medium": 74, "large": 92}
-# Where captions sit vertically in a 1080x1920 frame
-_CAPTION_Y     = {"top": 320, "center": 950, "middle": 950,
-                  "lower-third": 1300, "lower third": 1300, "lowerthird": 1300,
-                  "bottom": 1620}
+# Where captions sit vertically, as a FRACTION of frame height so the same
+# preset works on 9:16, 1:1 and 16:9 without landing off-screen.
+_CAPTION_Y     = {"top": 0.17, "center": 0.50, "middle": 0.50,
+                  "lower-third": 0.68, "lower third": 0.68, "lowerthird": 0.68,
+                  "bottom": 0.84}
 _COLOR_NAMES   = {
     "white": "#ffffff", "black": "#000000", "yellow": "#ffef4a", "gold": "#ffd24a",
     "amber": "#ffbf3a", "red": "#ff4a4a", "orange": "#ff9f43", "green": "#4ade80",
@@ -749,6 +750,52 @@ def _truthy(v) -> bool:
         "true", "1", "yes", "upper", "uppercase", "caps", "all caps", "all-caps", "allcaps")
 
 
+_FORMAT_PRESETS = {   # only used when the owner explicitly asks to reformat
+    "vertical":   (1080, 1920),   # 9:16  — Reels / Shorts / TikTok
+    "9:16":       (1080, 1920),
+    "square":     (1080, 1080),   # 1:1
+    "1:1":        (1080, 1080),
+    "landscape":  (1920, 1080),   # 16:9  — YouTube
+    "16:9":       (1920, 1080),
+}
+_LONG_EDGE = 1920   # cap so a 4K source is scaled down, never up
+
+
+def _probe_dims(path: Path) -> tuple[int, int] | None:
+    """Real pixel dimensions of a video, with any rotation flag already applied."""
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "json", str(path)],
+            capture_output=True, text=True, timeout=60)
+        st = (json.loads(r.stdout or "{}").get("streams") or [{}])[0]
+        w, h = int(st.get("width") or 0), int(st.get("height") or 0)
+        return (w, h) if w > 0 and h > 0 else None
+    except Exception:
+        return None
+
+
+def _target_frame(src: Path, fmt: str = "auto") -> tuple[int, int]:
+    """Decide the output frame size.
+
+    DEFAULT IS 'auto' = KEEP THE SOURCE SHAPE. A 16:9 YouTube video stays 16:9,
+    a 9:16 phone clip stays 9:16. We only scale so the long edge is _LONG_EDGE,
+    never crop or letterbox. Reformatting only happens when the owner explicitly
+    picks a format, because silently reshaping someone's footage destroys it.
+    """
+    fmt = (fmt or "auto").strip().lower()
+    if fmt in _FORMAT_PRESETS:
+        return _FORMAT_PRESETS[fmt]
+    dims = _probe_dims(src)
+    if not dims:
+        return (1080, 1920)            # unreadable source: fall back to vertical
+    w, h = dims
+    scale = _LONG_EDGE / float(max(w, h))
+    scale = min(scale, 1.0)            # never upscale
+    ow, oh = int(round(w * scale)), int(round(h * scale))
+    return (max(2, ow - (ow % 2)), max(2, oh - (oh % 2)))   # even dims for h264
+
+
 def _grade_from_style(style: dict) -> str:
     """Turn an analyzed reference clip's look into a concrete ffmpeg grade string."""
     warmth   = (style.get("grade_warmth") or "neutral").lower()
@@ -769,7 +816,8 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
               keywords: list | None = None,
               zoom_enabled: bool = False,
               zoom_strength: float = 0.08,
-              filler_indices: dict | None = None) -> dict:
+              filler_indices: dict | None = None,
+              out_w: int = 1080, out_h: int = 1920) -> dict:
     editing = client.get("editing", {})
     speaker = editing.get("caption_speaker", "speaker_0")
     MIN_DUR = 0.3   # ranges shorter than this are discarded
@@ -810,13 +858,19 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
     if directives.get("caption_size"):
         cap_size = _CAPTION_SIZE.get(directives["caption_size"].lower(), cap_size)
 
-    # Caption vertical position: directive > style reference > client default. Clamped
-    # to stay on-screen and clear of the very top/bottom safe areas.
-    cap_y = editing.get("caption_y", 1300)
+    # Caption geometry is FRAME-RELATIVE. Client settings and the position presets
+    # were both tuned on a 1080x1920 vertical frame, so they are scaled to whatever
+    # frame this video actually renders at — otherwise y=1300 lands off-screen on a
+    # 1920x1080 landscape edit.
+    _vs = out_h / 1920.0
+    cap_size = max(18, int(round(cap_size * _vs)))
+    cap_y = float(editing.get("caption_y", 1300)) * _vs
     pos = str(directives.get("caption_position") or style.get("caption_position") or "").strip().lower()
-    if pos:
-        cap_y = _CAPTION_Y.get(pos, cap_y)
-    cap_y = max(240, min(1680, int(cap_y)))
+    if pos and pos in _CAPTION_Y:
+        cap_y = _CAPTION_Y[pos] * out_h          # presets are fractions of frame height
+    cap_y = int(max(0.10 * out_h, min(0.92 * out_h, cap_y)))
+    cap_max_w = int(float(editing.get("caption_max_width", 960)) * (out_w / 1080.0))
+    cap_max_w = max(120, min(out_w - 40, cap_max_w))
 
     # ALL-CAPS captions if the reference uses them (or a mandatory directive asks)
     cap_upper = _truthy(directives.get("caption_uppercase")) or _truthy(style.get("caption_uppercase"))
@@ -873,6 +927,8 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
         "version": 1,
         "sources": edl_sources,
         "grade": grade_str,
+        "width":  out_w,          # the real output frame — every stage reads these
+        "height": out_h,          # instead of assuming 1080x1920
         "ranges": ranges,
         "style": {
             "fonts": fonts,
@@ -880,7 +936,7 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
                 "speaker":         speaker,
                 "font_size":       cap_size,
                 "y":               cap_y,
-                "max_width":       editing.get("caption_max_width", 960),
+                "max_width":       cap_max_w,
                 "color":           caption_color,
                 "highlight_color": highlight_color,
                 "uppercase":       cap_upper,
@@ -997,13 +1053,30 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             }
 
         # ── 2. Normalize ───────────────────────────────────────────────────────
+        # Frame size is decided ONCE, from the footage itself. Default keeps the
+        # source shape (a 16:9 YouTube video stays 16:9); a format is only forced
+        # when the job or client profile explicitly asks for one.
+        _fmt = str(job.get("format")
+                   or job.get("client_snapshot", {}).get("editing", {}).get("format")
+                   or "auto").strip().lower()
+        _first_src = next(iter(source_map.values()))["raw"]
+        out_w, out_h = _target_frame(_first_src, _fmt)
+        _src_dims = _probe_dims(_first_src)
+        if _fmt in _FORMAT_PRESETS:
+            _log(job_path, f"format: '{_fmt}' requested — rendering {out_w}x{out_h} "
+                           f"(source {_src_dims[0]}x{_src_dims[1]})" if _src_dims else
+                           f"format: '{_fmt}' — rendering {out_w}x{out_h}")
+        else:
+            _log(job_path, f"format: keeping the source shape — {out_w}x{out_h}"
+                           + (f" (from {_src_dims[0]}x{_src_dims[1]})" if _src_dims else ""))
+
         _check_cancelled(job_path)
         for name, s in source_map.items():
             if s["norm"].exists():
                 _log(job_path, f"normalize: cached — {s['norm'].name}")
                 continue
-            _log(job_path, f"normalize: {s['raw'].name} → {s['norm'].name}")
-            normalize(s["raw"], s["norm"])
+            _log(job_path, f"normalize: {s['raw'].name} → {s['norm'].name} @ {out_w}x{out_h}")
+            normalize(s["raw"], s["norm"], height=out_h, width=out_w)
 
         # ── 3. Transcribe ──────────────────────────────────────────────────────
         _check_cancelled(job_path)
@@ -1132,7 +1205,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                         keywords=keywords,
                         zoom_enabled=zoom_enabled,
                         zoom_strength=zoom_strength,
-                        filler_indices=filler_indices)
+                        filler_indices=filler_indices,
+                        out_w=out_w, out_h=out_h)
 
         # Log exactly which reference-style choices were applied to this render
         _sp = client.get("style_profile") or {}

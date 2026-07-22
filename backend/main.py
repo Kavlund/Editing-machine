@@ -1587,6 +1587,12 @@ The AI picks per photo by default; pass style on add_broll to force one. If the 
 pop up as a card (e.g. "make all the pictures pop in", "always use the BAM effect"), call set_photo_style
 with mode "cards"; use "auto" to hand the choice back to the AI.
 
+NEVER CHANGE THE VIDEO'S SHAPE UNLESS ASKED. Every video keeps the aspect ratio it was filmed in —
+a 16:9 YouTube recording stays 16:9, a phone clip stays 9:16. Do NOT reformat, crop or "optimise for
+Reels" on your own initiative, and do not suggest it unprompted; reshaping footage nobody asked you to
+reshape destroys the video. Only call set_format when the user explicitly asks for a different shape
+("make it vertical", "crop to 9:16", "make it square"). set_format "auto" restores the original shape.
+
 NEVER ASK FOR A SCRIPT THAT ALREADY EXISTS. The SCRIPT line in this job's context above tells you
 whether one is saved. Most videos are started WITH a script (it is attached in the Script field next to
 the upload, or alongside the video pulled from Drive), so assume it is there until the context says
@@ -1746,6 +1752,24 @@ _JOB_CHAT_TOOLS = [
                 "script": {"type": "string", "description": "Only use if the script came from somewhere other than the user's last message. Normally omit this."},
             },
             "required": [],
+        },
+    },
+    {
+        "name": "set_format",
+        "description": (
+            "Change this video's output shape, then re-render. ONLY call this when the user "
+            "explicitly asks to change the format or aspect ratio (e.g. 'make it vertical for Reels', "
+            "'crop this to 9:16', 'make it square'). By default a video keeps the shape it was filmed "
+            "in, and you must never reformat on your own initiative — reshaping someone's footage "
+            "without being asked ruins it. Use 'auto' to go back to keeping the original shape."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "format": {"type": "string", "enum": ["auto", "vertical", "square", "landscape"],
+                           "description": "auto = keep the source shape (default), vertical = 9:16 Reels/Shorts/TikTok, square = 1:1, landscape = 16:9 YouTube"},
+            },
+            "required": ["format"],
         },
     },
     {
@@ -1928,6 +1952,26 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             _remember(job, {"broll_style": mode})    # learn photo habits
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"photo_style": mode}})
             return {"ok": True, "photo_style": mode, "rerendering": True}
+
+    if tool_name == "set_format":
+        if not job_id:
+            return {"error": "No job context"}
+        job_path = JOBS_DIR / f"{job_id}.json"
+        if not job_path.exists():
+            return {"error": "Job not found"}
+        job = json.loads(job_path.read_text())
+        fmt = (tool_input.get("format") or "auto").strip().lower()
+        if fmt not in ("auto", "vertical", "square", "landscape"):
+            return {"error": "format must be auto, vertical, square or landscape"}
+        if fmt == "auto":
+            job.pop("format", None)
+        else:
+            job["format"] = fmt
+        _rerender_job(job, job_id)
+        applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"format": fmt}})
+        return {"ok": True, "format": fmt, "rerendering": True,
+                "note": "auto keeps the shape the video was filmed in." if fmt == "auto"
+                        else f"Video will be re-rendered as {fmt}."}
 
     if tool_name in ("use_pasted_script", "clear_script", "get_script"):
         if not job_id:

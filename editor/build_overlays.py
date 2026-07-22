@@ -18,8 +18,12 @@ import json, math, re, shutil, subprocess, sys
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
+# Overlay canvas. These are DEFAULTS ONLY — main() overrides them from the EDL so
+# overlays are built at the video's real frame size. Never assume 9:16 here: a
+# 1080x1920 caption layer composited onto a 1920x1080 edit lands in the corner.
 W, H = 1080, 1920
 FPS = 30
+VS = 1.0        # vertical scale vs the 1920-tall frame these defaults were tuned on
 
 # ----- defaults (overridable per project via EDL style.fonts / style.captions) -----
 DEFAULT_FONTS = {
@@ -129,9 +133,10 @@ def build_title(edit, edl):
     f_imp  = font(fonts["impact"], t.get("impact_size", 115), weight=700)
     L1 = t.get("handwritten", "")
     impact_lines = t.get("impact_lines", [])
-    y1 = t.get("y_handwritten", 292)
-    y2 = t.get("y_impact", 360)
-    line_gap = t.get("impact_line_gap", 95)
+    # Defaults are tuned for a 1920-tall frame; scale them to the real one.
+    y1 = int(round(t.get("y_handwritten", 292) * VS))
+    y2 = int(round(t.get("y_impact", 360) * VS))
+    line_gap = int(round(t.get("impact_line_gap", 95) * VS))
     dur = float(t.get("duration", 4.5))
 
     big_shadows  = [{"offset":(0,12),"alpha":190,"blur":22},{"offset":(0,5),"alpha":230,"blur":8}]
@@ -432,6 +437,13 @@ def main():
     edit = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
     which = sys.argv[2] if len(sys.argv) > 2 else "all"
     edl = json.loads((edit/"edl.json").read_text())
+    # Build overlays at the video's REAL frame size, not a hardcoded 9:16 canvas.
+    global W, H, VS, HOOK_Y
+    W = int(edl.get("width", 1080))
+    H = int(edl.get("height", 1920))
+    VS = H / 1920.0
+    HOOK_Y = int(round(HOOK_Y * VS))     # hook sits at the same relative height
+    print(f"overlays canvas: {W}x{H}")
     if which in ("all", "title"):    build_title(edit, edl)
     if which in ("all", "captions"): build_captions(edit, edl)
     if which in ("all", "hook"):     build_hook(edit, edl)

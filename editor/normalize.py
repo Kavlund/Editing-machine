@@ -18,12 +18,21 @@ from pathlib import Path
 
 
 def normalize(src: Path, dst: Path, height: int = 1920, crf: int = 18,
-              timeout: int = 1800) -> None:
-    # fps=30 -> true CFR;  scale=-2:H -> keep aspect, even width;  setsar=1 -> square pixels.
+              timeout: int = 1800, width: int | None = None) -> None:
+    # fps=30 -> true CFR;  setsar=1 -> square pixels.
     # ffmpeg auto-applies the rotation matrix before filters, so portrait phone
     # clips come out portrait. Audio -> PCM 48k so cuts are sample-exact.
     # timeout: a corrupt/malformed upload must never hang the pipeline forever.
-    vf = f"fps=30,scale=-2:{height},setsar=1"
+    #
+    # WIDTH MATTERS: with only a height, `scale=-2:1920` blows a 16:9 clip up to
+    # 3413x1920 and everything downstream then squashes it back into 9:16. When
+    # the caller knows the target frame, fit INSIDE it and pad — never crop, so
+    # no part of the picture is ever thrown away.
+    if width:
+        vf = (f"fps=30,scale={width}:{height}:force_original_aspect_ratio=decrease,"
+              f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1")
+    else:
+        vf = f"fps=30,scale=-2:{height},setsar=1"
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-v", "error", "-i", str(src),

@@ -47,14 +47,18 @@ def probe_dur(path) -> float:
 def extract_segments(edit, edl):
     clips = edit/"clips30"; clips.mkdir(exist_ok=True)
     grade = edl.get("grade", "")
-    height = edl.get("height", 1920)
+    OW, OH = int(edl.get("width", 1080)), int(edl.get("height", 1920))
     paths = []
     for i, r in enumerate(edl["ranges"]):
         s, e = float(r["start"]), float(r["end"])
         sq  = round(s*FPS)/FPS
         dur = round((e-s)*FPS)/FPS
         out = clips/f"seg_{i:02d}.mkv"
-        vf = f"scale=-2:{height}" + (f",{grade}" if grade else "")
+        # Fit inside the output frame and pad — never crop, so nothing is lost
+        # when a source doesn't exactly match the target shape.
+        vf = (f"scale={OW}:{OH}:force_original_aspect_ratio=decrease,"
+              f"pad={OW}:{OH}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+              + (f",{grade}" if grade else ""))
         af = f"afade=t=in:st=0:d=0.03,afade=t=out:st={max(0,dur-0.03):.3f}:d=0.03"
         src = edit/edl["sources"][r["source"]]
         run(["ffmpeg","-y","-v","error","-ss",f"{sq:.4f}","-i",str(src),
@@ -67,7 +71,7 @@ def extract_segments(edit, edl):
     return paths
 
 
-def apply_zoom(src, out, strength):
+def apply_zoom(src, out, strength, ow=1080, oh=1920):
     """Slow continuous push-in across the whole clip (Ken Burns), applied to the
     base video BEFORE overlays so captions/hook stay locked in place.
     z ramps linearly 1.0 -> 1+strength over the full duration."""
@@ -80,14 +84,14 @@ def apply_zoom(src, out, strength):
     zexpr = f"min(1+{strength:.5f}*on/{total},{end_z:.5f})"
     # zoompan holds each input frame for one output frame (d=1) and re-crops per frame
     vf = (f"zoompan=z='{zexpr}':d=1:"
-          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={FPS}")
+          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={ow}x{oh}:fps={FPS}")
     run(["ffmpeg","-y","-v","error","-i",str(src),
          "-vf",vf,"-c:v","libx264","-preset","fast","-crf","18",
          "-pix_fmt","yuv420p","-c:a","copy", str(out)])
     print(f"  zoom applied: 1.0 -> {end_z:.3f} over {total} frames")
 
 
-def apply_timed_zooms(src, out, events):
+def apply_timed_zooms(src, out, events, ow=1080, oh=1920):
     """Punch in and hold at specific moments: at each event time the frame snaps
     tighter (fast ease-in), holds for its duration, then eases back to normal.
     Applied to the base video BEFORE overlays so captions/hook stay locked.
@@ -104,10 +108,10 @@ def apply_timed_zooms(src, out, events):
         fall = f"clip(({a + d:.3f}-{tt})/{R},0,1)"
         terms.append(f"{strg:.4f}*{rise}*{fall}")
     if not terms:
-        return apply_zoom(src, out, 0.0001)  # no-op safety (shouldn't happen)
+        return apply_zoom(src, out, 0.0001, ow, oh)  # no-op safety (shouldn't happen)
     zexpr = "1+" + "+".join(terms)
     vf = (f"zoompan=z='{zexpr}':d=1:"
-          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={FPS}")
+          f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={ow}x{oh}:fps={FPS}")
     run(["ffmpeg","-y","-v","error","-i",str(src),
          "-vf",vf,"-c:v","libx264","-preset","fast","-crf","18",
          "-pix_fmt","yuv420p","-c:a","copy", str(out)])
@@ -138,6 +142,7 @@ def concat(edit, paths, out):
 
 
 def overlay(edit, edl, base, out, starts, durs):
+    OW, OH     = int(edl.get("width", 1080)), int(edl.get("height", 1920))
     title      = edit/"animations/title/title.mov"
     caps       = edit/"animations/captions/captions.mov"
     hook_mov   = edit/"animations/hook/hook.mov"
@@ -205,8 +210,8 @@ def overlay(edit, edl, base, out, starts, durs):
             nfr = max(1, int((e - s) * FPS))
             zexpr = f"min(1+0.06*on/{nfr},1.06)"
             parts.append(
-                f"[{idx}:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-                f"zoompan=z='{zexpr}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={FPS},"
+                f"[{idx}:v]scale={OW}:{OH}:force_original_aspect_ratio=increase,crop={OW}:{OH},"
+                f"zoompan=z='{zexpr}':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={OW}x{OH}:fps={FPS},"
                 f"format=yuv420p,setpts=PTS-STARTPTS+{s}/TB[b{i}]")
             ov = f"overlay=enable='between(t,{s:.3f},{e:.3f})'"
         else:
@@ -235,6 +240,8 @@ def overlay(edit, edl, base, out, starts, durs):
 def main():
     edit = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
     edl = json.loads((edit/"edl.json").read_text())
+    OW, OH = int(edl.get("width", 1080)), int(edl.get("height", 1920))
+    print(f"output frame: {OW}x{OH}")
     for f in ("clips30","base30.mkv","base30_zoom.mkv","composited30.mkv","_seg_offsets.json"):
         p = edit/f
         if p.is_dir():
@@ -257,12 +264,12 @@ def main():
     if zooms:
         print(f"applying {len(zooms)} timed punch-in zoom(s)...")
         zoomed = edit/"base30_zoom.mkv"
-        apply_timed_zooms(base, zoomed, zooms)
+        apply_timed_zooms(base, zoomed, zooms, OW, OH)
         base = zoomed
     elif edl.get("zoom_enabled"):
         print("applying zoom push-in...")
         zoomed = edit/"base30_zoom.mkv"
-        apply_zoom(base, zoomed, float(edl.get("zoom_strength", 0.08)))
+        apply_zoom(base, zoomed, float(edl.get("zoom_strength", 0.08)), OW, OH)
         base = zoomed
 
     print("overlays (b-roll, hook, title, captions LAST) -> composited30.mkv")
