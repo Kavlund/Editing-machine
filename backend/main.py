@@ -1380,12 +1380,33 @@ def free_space():
                         shutil.rmtree(dp, ignore_errors=True)
                 except Exception:
                     pass
+    # Orphaned upload folders: footage whose job record no longer exists, because
+    # the job was deleted or the upload was cut off before the job was written.
+    # Nothing in the app can reach these — they are pure dead weight, and they are
+    # the usual reason the volume stays full after "deleting" things.
+    orphans = orphan_mb = 0
+    if UPLOADS_DIR.exists():
+        for job_dir in UPLOADS_DIR.iterdir():
+            if not job_dir.is_dir():
+                continue
+            if (JOBS_DIR / f"{job_dir.name}.json").exists():
+                continue                      # still referenced by a real job
+            try:
+                size = sum(p.stat().st_size for p in job_dir.rglob("*") if p.is_file())
+                shutil.rmtree(job_dir, ignore_errors=True)
+                orphans += 1
+                orphan_mb += size / 1e6
+                freed += size
+            except Exception:
+                pass
+
     free_gb = None
     try:
         free_gb = round(shutil.disk_usage(str(DATA_ROOT)).free / 1e9, 2)
     except Exception:
         pass
-    return {"ok": True, "freed_mb": round(freed / 1e6), "free_gb": free_gb}
+    return {"ok": True, "freed_mb": round(freed / 1e6), "free_gb": free_gb,
+            "orphans_removed": orphans, "orphan_mb": round(orphan_mb)}
 
 
 # ── Files manager — browse and selectively delete what's on the volume ───────

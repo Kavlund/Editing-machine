@@ -302,8 +302,42 @@ function checkSubmitReady() {
 
 // ── Upload ───────────────────────────────────────────────────────────────
 
+// Big uploads can die at the network edge before the server ever sees them, so
+// the server cannot be the one to complain. Check here, before a byte is sent.
+const UPLOAD_HEADROOM_BYTES = 600 * 1024 * 1024;   // room for the render to work
+const SINGLE_UPLOAD_WARN    = 900 * 1024 * 1024;   // above this, going via Drive is safer
+
+async function preflightUpload(totalBytes) {
+  const gb = b => (b / 1e9).toFixed(2);
+  let storage = null;
+  try { storage = await api.get('/api/admin/storage'); } catch {}
+
+  if (storage && typeof storage.free_gb === 'number') {
+    const free = storage.free_gb * 1e9;
+    if (free < totalBytes + UPLOAD_HEADROOM_BYTES) {
+      return `Not enough space. This upload is ${gb(totalBytes)} GB and only ${storage.free_gb.toFixed(2)} GB is free `
+           + `(a render needs about 0.6 GB of working room on top). `
+           + `Delete some old jobs to free space, then try again.`;
+    }
+  }
+  if (totalBytes > SINGLE_UPLOAD_WARN) {
+    return `This upload is ${gb(totalBytes)} GB, which is large enough that the connection often drops part-way `
+         + `through and the upload restarts from zero. Put the file in the client's Drive "Source" folder and use `
+         + `"Pull from Drive" instead — the server fetches it directly and size stops mattering.`;
+  }
+  return null;   // good to go
+}
+
 async function handleSubmit() {
   if (!state.files.length || !state.clientId) return;
+
+  const totalBytes = state.files.reduce((n, f) => n + (f.file?.size || 0), 0);
+  const problem = await preflightUpload(totalBytes);
+  if (problem) {
+    toast(problem, 'error');
+    await confirmDialog(problem, 'OK');   // make sure it can't be missed
+    return;                               // nothing sent, nothing lost
+  }
 
   els.submitBtn.disabled = true;
   els.submitBtn.textContent = 'Uploading...';
