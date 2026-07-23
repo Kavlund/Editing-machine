@@ -33,8 +33,11 @@ ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 # One codebase, many deployments. Everything brand-specific comes from env vars
 # so the same code serves the client's instance and our own internal one — no
 # fork, no drift. BRAND_LOGO points at any file in static/ (or an external URL).
-BRAND_NAME = os.environ.get("BRAND_NAME", "Acquisition Empire")
-BRAND_LOGO = os.environ.get("BRAND_LOGO", "/logo.png")
+# Defaults are intentionally neutral: an instance that sets neither shows a plain
+# "Editing Machine" with no logo, rather than leaking another brand's name or a
+# broken image link. Real instances set BRAND_NAME (and optionally BRAND_LOGO).
+BRAND_NAME = os.environ.get("BRAND_NAME", "Editing Machine")
+BRAND_LOGO = os.environ.get("BRAND_LOGO", "")
 
 app = FastAPI(title="Talking Head Editor")
 
