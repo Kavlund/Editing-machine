@@ -15,6 +15,45 @@ def _is_broll_image(p) -> bool:
     from pathlib import Path as _P
     return _P(p).suffix.lower() in BROLL_IMAGE_EXTS
 
+
+def _decodable_image(path, log_fn=None):
+    """The container's ffmpeg can't read HEIC/HEIF (iPhone's default photo format),
+    so a raw .HEIC B-roll photo makes the render fail. Convert those to a sibling
+    JPEG that every downstream stage (vision tagging + ffmpeg compositing) can read.
+    Returns the path to use — the .jpg for HEIC/HEIF, the original otherwise, or
+    None if it can't be decoded at all (so the caller drops just that one photo)."""
+    from pathlib import Path as _P
+    path = _P(path)
+    if path.suffix.lower() not in (".heic", ".heif"):
+        return path
+    out = path.with_suffix(".jpg")
+    if out.exists():
+        return out
+    try:
+        from PIL import Image
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except Exception:
+            pass  # if unavailable, PIL may still open it; otherwise the except below fires
+        with Image.open(path) as im:
+            im.convert("RGB").save(out, "JPEG", quality=90)
+        # Carry the source's mtime onto the JPEG so the vision-tag cache (keyed on
+        # name+size+mtime) stays hit across renders instead of re-tagging every time.
+        try:
+            import os as _os
+            st = path.stat()
+            _os.utime(out, (st.st_atime, st.st_mtime))
+        except Exception:
+            pass
+        if log_fn:
+            log_fn(f"B-roll: converted {path.name} → {out.name} (HEIC isn't ffmpeg-readable)")
+        return out
+    except Exception as e:
+        if log_fn:
+            log_fn(f"B-roll: couldn't read {path.name} ({e}) — skipping that photo")
+        return None
+
 MOCK_TRANSCRIBE     = os.environ.get("MOCK_TRANSCRIBE", "") == "1"
 SLACK_WEBHOOK_URL   = os.environ.get("SLACK_WEBHOOK_URL", "")
 
@@ -1318,6 +1357,15 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             f for f in broll_src.iterdir()
             if f.is_file() and f.suffix.lower() in BROLL_EXTS
         ) if broll_src.exists() else []
+        # HEIC/HEIF photos aren't ffmpeg-readable — convert them to JPEG up front so
+        # every later stage (tagging, planning, compositing) sees a standard image.
+        # Dedup by final name so a re-run doesn't include both IMG.HEIC and IMG.jpg.
+        _by_name = {}
+        for c in clips:
+            d = _decodable_image(c, lambda m: _log(job_path, m))
+            if d is not None:
+                _by_name[d.name] = d
+        clips = sorted(_by_name.values())
 
         # B-roll count control (set per-video on the job card):
         #   None / "ai"  -> AI decides how many

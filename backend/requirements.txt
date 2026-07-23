@@ -3,6 +3,7 @@ anthropic==0.115.0
 fastapi==0.111.0
 numpy==2.5.0
 pillow==12.2.0
+pillow-heif==0.18.0        # decode iPhone HEIC/HEIF B-roll photos (ffmpeg can't)
 python-docx==1.2.0
 python-dotenv==1.2.2
 requests==2.34.2
