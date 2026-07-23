@@ -155,6 +155,12 @@ def _render_page(filename: str) -> HTMLResponse:
     """Serve a page with the brand substituted in. The static mount can't
     template, so every brand-bearing page is served through here instead."""
     html = (BASE / "static" / filename).read_text()
+    if not BRAND_LOGO:
+        # No logo configured for this instance: drop the logo <img> and favicon
+        # tags entirely, so the header shows just the brand name cleanly rather
+        # than a broken-image icon.
+        html = re.sub(r'<img\b[^>]*__BRAND_LOGO__[^>]*>', '', html)
+        html = re.sub(r'<link\b[^>]*rel="icon"[^>]*__BRAND_LOGO__[^>]*>', '', html)
     html = html.replace("__BRAND_NAME__", BRAND_NAME).replace("__BRAND_LOGO__", BRAND_LOGO)
     return HTMLResponse(html)
 
