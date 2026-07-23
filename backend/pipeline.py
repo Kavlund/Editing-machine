@@ -870,12 +870,23 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
 
     # Pacing -> cut density: how long a pause must be before it gets trimmed.
     # Faster style = trim more (shorter GAP); slower = keep natural pauses.
-    # Clamped so a bad read can never chop mid-word or leave dead air.
+    # Prefer the reference's MEASURED cut rate over a guessed label; clamped so a
+    # bad read can never chop mid-word or leave dead air.
     pacing = str(directives.get("pacing") or style.get("pacing") or "").strip().lower()
-    if "fast" in pacing:   GAP = 0.30
+    cpm = style.get("cuts_per_minute")
+    if not directives.get("pacing") and isinstance(cpm, (int, float)) and cpm > 0:
+        GAP = 0.32 if cpm >= 25 else 0.45 if cpm >= 10 else 0.72
+    elif "fast" in pacing: GAP = 0.30
     elif "slow" in pacing: GAP = 0.80
     else:                  GAP = 0.50
     GAP = max(0.25, min(1.20, GAP))
+
+    # Movement: if nothing explicit turned zoom on, let the reference's movement
+    # level enable a gentle global push-in that matches its energy.
+    zi = str(style.get("zoom_intensity") or "").strip().lower()
+    if not zoom_enabled and directives.get("zoom") != "off" and zi in ("subtle", "frequent", "punchy"):
+        zoom_enabled  = True
+        zoom_strength = {"subtle": 0.05, "frequent": 0.08, "punchy": 0.11}.get(zi, 0.07)
 
     def _pick_grade(key, default):
         return directives.get(key) or style.get(key) or default
@@ -941,6 +952,13 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
         _flush(group, name, MIN_DUR, ranges)
 
     fonts = {k: _font(k) for k in ("handwritten", "impact", "caption")}
+    # Caption typeface from the reference: only override for the visibly-distinct
+    # looks (condensed / handwritten); rounded / classic keep the default.
+    _cf = str(directives.get("caption_font") or style.get("caption_font") or "").strip().lower()
+    if "condens" in _cf or "tall" in _cf or "impact" in _cf or "bold-sans" in _cf:
+        fonts["caption"] = _font("impact")        # Oswald — tall condensed
+    elif "hand" in _cf or "script" in _cf or "marker" in _cf:
+        fonts["caption"] = _font("handwritten")   # Caveat — handwritten
     edl_sources = {
         n: str(s["norm"].relative_to(project_dir))
         for n, s in source_map.items()
@@ -1252,12 +1270,16 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         if _sp.get("summary") or _sp.get("features"):
             _cap = edl.get("style", {}).get("captions", {})
             _pos = str(_sp.get("caption_position") or "").strip() or "default"
-            _pace = str(_sp.get("pacing") or "medium").strip()
+            _cpm = _sp.get("cuts_per_minute")
+            _pace = (f"{_cpm} cuts/min" if isinstance(_cpm, (int, float)) and _cpm
+                     else str(_sp.get("pacing") or "medium").strip())
             _log(job_path,
                  f"Style match: captions {_pos} @ y={_cap.get('y')} size {_cap.get('font_size')}"
                  f"{' ALL-CAPS' if _cap.get('uppercase') else ''}, "
                  f"text {_cap.get('color')} / highlight {_cap.get('highlight_color') or 'none'}, "
-                 f"pacing {_pace}")
+                 f"font {str(_sp.get('caption_font') or 'default')}, "
+                 f"pacing {_pace}, b-roll {str(_sp.get('broll_intensity') or 'ai')}, "
+                 f"movement {str(_sp.get('zoom_intensity') or 'none')}")
 
         # Apply per-job overrides (set via the job chat) on top of the generated EDL
         overrides = job.get("job_overrides", {})
@@ -1377,6 +1399,16 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             broll_count = int(_broll_raw)
         elif isinstance(_broll_raw, str) and _broll_raw.strip().isdigit():
             broll_count = int(_broll_raw.strip())
+
+        # If this video didn't set a count, let the reference style's B-roll density
+        # decide how many cutaways to place — scaled by the video's length and clamped.
+        if broll_count is None:
+            _bi = str((client.get("style_profile") or {}).get("broll_intensity") or "").strip().lower()
+            if _bi in ("light", "moderate", "heavy"):
+                _mins = max(0.2, sum(r["end"] - r["start"] for r in edl["ranges"]) / 60.0)
+                _per_min = {"light": 1.0, "moderate": 2.5, "heavy": 4.0}[_bi]
+                broll_count = max(1, min(12, round(_per_min * _mins)))
+                _log(job_path, f"B-roll: reference style is '{_bi}' → targeting {broll_count} cutaway(s)")
 
         # A mandatory 'no B-roll' rule from the client's specific instructions wins
         if directives.get("broll") == "off":

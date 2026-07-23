@@ -758,11 +758,11 @@ def _resp_text(resp) -> str:
                    if getattr(b, "type", None) == "text" or hasattr(b, "text")).strip()
 
 
-_STYLE_PROMPT = """These are frames sampled from a short-form video the creator likes and wants their edits to feel like. Analyze its EDITING / VISUAL STYLE (not the specific content) so another editor could match the vibe. Return ONLY strict JSON:
+_STYLE_PROMPT = """These are frames sampled EVENLY across a short-form video the creator likes and wants their own edits to feel like — read them left-to-right as a timeline, not as separate photos. You are also told the video's measured HARD-CUT RATE (shot changes per minute), which the frames alone can't show. Analyze its EDITING / VISUAL STYLE (not the specific content) so another editor could clone the vibe onto a talking-head video. Return ONLY strict JSON:
 {
   "caption_style": "one sentence on the captions — placement, size, weight, color, animation feel (or 'none visible')",
   "color_mood": "the colour grade / mood — warm vs cool, contrast, saturation, overall feel",
-  "pacing": "slow | medium | fast-cut",
+  "pacing": "slow | medium | fast-cut  (be guided by the measured cut rate below)",
   "energy": "calm | balanced | high-energy",
   "text_overlays": "hook/title/on-screen-text style if any, else 'none visible'",
   "grade_warmth": "warmer | cooler | neutral",
@@ -773,8 +773,29 @@ _STYLE_PROMPT = """These are frames sampled from a short-form video the creator 
   "caption_text_color": "the main caption word colour as a hex like #ffffff, or a common colour name (white/yellow/black...); 'none' if there are no captions",
   "caption_highlight_color": "the colour of the emphasised / currently-spoken (karaoke) word as a hex or colour name; 'none' if the words never change colour",
   "caption_uppercase": true,
+  "caption_font": "rounded | condensed | classic | handwritten | none  (the caption typeface feel)",
+  "broll_intensity": "none | light | moderate | heavy  (how much cutaway / B-roll footage is layered over the main speaker — judge from how often the frames cut to non-speaker shots, informed by the cut rate)",
+  "zoom_intensity": "none | subtle | frequent | punchy  (how much the framing pushes in, punches, or moves)",
+  "hook_style": "bold | subtle | none  (is there a big on-screen hook / title, or not)",
   "summary": "2-3 sentence overall style description an editor could follow to match this look"
 }"""
+
+
+def _measure_cuts(vid: Path, dur: float) -> tuple:
+    """Count hard cuts with ffmpeg scene detection -> (cut_count, cuts_per_minute).
+    This is the one 'feel' signal stills can't capture — a fast, cutty edit vs a
+    slow one — so it grounds the vision read in a real number."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", str(vid),
+             "-vf", "select='gt(scene,0.30)',showinfo", "-an", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120)
+        cuts = r.stderr.count("pts_time:")
+        cpm = (cuts / dur * 60.0) if dur > 0 else 0.0
+        return cuts, round(cpm, 1)
+    except Exception:
+        return 0, 0.0
 
 
 def _analyze_reference_style(content: bytes) -> dict:
@@ -796,11 +817,19 @@ def _analyze_reference_style(content: bytes) -> dict:
         except Exception:
             dur = 6.0
 
+        # Measured motion signal (stills can't show it)
+        cut_count, cuts_per_min = _measure_cuts(vid, dur)
+
+        # A storyboard of ~14 frames across the whole clip, so Claude reads it as a
+        # timeline and can judge B-roll usage, movement, and how the look evolves —
+        # not just three isolated moments.
+        N = 14
         frames = []
-        for frac in (0.2, 0.5, 0.8):
-            fp = tdp / f"f_{int(frac*100)}.jpg"
+        for i in range(N):
+            frac = (i + 0.5) / N
+            fp = tdp / f"f_{i:02d}.jpg"
             try:
-                subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{max(0.1, dur*frac):.2f}",
+                subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{max(0.05, dur*frac):.2f}",
                                 "-i", str(vid), "-frames:v", "1", "-vf", "scale=480:-1",
                                 "-q:v", "4", str(fp)], check=True, timeout=60)
                 if fp.exists():
@@ -810,17 +839,22 @@ def _analyze_reference_style(content: bytes) -> dict:
         if not frames:
             raise HTTPException(400, "Could not read frames from the clip — is it a valid video file?")
 
+        prompt = (_STYLE_PROMPT + f"\n\nMEASURED HARD-CUT RATE for this clip: {cuts_per_min} cuts/minute "
+                  f"({cut_count} shot changes over {dur:.0f}s). Use it to set pacing and broll_intensity: "
+                  f"~0-10 = slow/light, ~10-25 = medium/moderate, 25+ = fast-cut/heavy.")
         blocks = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b}}
                   for b in frames]
-        blocks.append({"type": "text", "text": _STYLE_PROMPT})
+        blocks.append({"type": "text", "text": prompt})
         sdk = ant.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=4)
-        resp = sdk.messages.create(model="claude-sonnet-5", max_tokens=800,
+        resp = sdk.messages.create(model="claude-sonnet-5", max_tokens=900,
                                    messages=[{"role": "user", "content": blocks}])
         raw = _resp_text(resp)
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if not m:
             raise HTTPException(500, "Could not parse a style profile from the clip")
-        return json.loads(m.group())
+        prof = json.loads(m.group())
+        prof["cuts_per_minute"] = cuts_per_min   # keep the measured number on the profile
+        return prof
 
 
 _STYLE_SYNTH_PROMPT = """You are given style analyses of several short clips a creator uploaded as inspiration — videos they like and want their OWN edits to match. Synthesize ONE combined style profile that captures their preferred style: find the common thread, and where clips differ pick the dominant / most-repeated look. Infer the structured caption fields (position, colours, uppercase) from the per-clip caption descriptions. Return ONLY strict JSON:
@@ -838,8 +872,12 @@ _STYLE_SYNTH_PROMPT = """You are given style analyses of several short clips a c
   "caption_text_color": "the main caption word colour as hex or a common colour name; 'none' if they use no captions",
   "caption_highlight_color": "the karaoke / emphasis word colour as hex or colour name; 'none' if words never change colour",
   "caption_uppercase": true,
+  "caption_font": "rounded | condensed | classic | handwritten | none",
+  "broll_intensity": "none | light | moderate | heavy",
+  "zoom_intensity": "none | subtle | frequent | punchy",
+  "hook_style": "bold | subtle | none",
   "summary": "2-3 sentence description of the creator's combined preferred style",
-  "features": ["3-6 short plain-language bullets stating exactly what EVERY future video for this creator will now use, e.g. 'Bold centred karaoke captions', 'Warm, high-contrast colour grade', 'Fast, punchy cuts', 'Big all-caps hook text'"]
+  "features": ["3-6 short plain-language bullets stating exactly what EVERY future video for this creator will now use, e.g. 'Bold centred karaoke captions', 'Warm, high-contrast colour grade', 'Fast, punchy cuts with heavy B-roll', 'Big all-caps hook text'"]
 }"""
 
 
@@ -858,7 +896,13 @@ def _synthesize_style_profile(analyses: list) -> dict:
             _STYLE_SYNTH_PROMPT + "\n\nPer-clip analyses:\n" + json.dumps(analyses, indent=2)}])
     raw = _resp_text(resp)
     m = re.search(r'\{.*\}', raw, re.DOTALL)
-    return json.loads(m.group()) if m else analyses[0]
+    profile = json.loads(m.group()) if m else dict(analyses[0])
+    # Carry the measured cut rate as the numeric average across the clips, so the
+    # render maps pacing/B-roll density off a real number, not a guessed label.
+    nums = [a.get("cuts_per_minute") for a in analyses if isinstance(a.get("cuts_per_minute"), (int, float))]
+    if nums:
+        profile["cuts_per_minute"] = round(sum(nums) / len(nums), 1)
+    return profile
 
 
 def _style_refs_dir(client_id: str) -> Path:
@@ -885,8 +929,26 @@ def _save_style_analyses(client_id: str, data: dict):
 
 
 def _resynthesize_style(client_id: str):
-    """Re-synthesize the combined profile from all a client's reference clips and store it."""
-    analyses = list(_load_style_analyses(client_id).values())
+    """Rebuild the combined profile from a client's reference clips and store it.
+    Clips whose cached read predates the current analyzer (no measured cut rate)
+    are RE-ANALYZED from the stored video, so 'Re-apply latest style engine' truly
+    upgrades an existing client to the full near-clone — not just a re-synth of
+    stale reads. Already-current clips are skipped so it doesn't re-pay each press."""
+    cache  = _load_style_analyses(client_id)
+    folder = STYLE_DIR / client_id
+    if folder.exists() and ANTHROPIC_API_KEY:
+        for f in sorted(folder.iterdir()):
+            if not (f.is_file() and f.suffix.lower() in BROLL_EXTS):
+                continue
+            cached = cache.get(f.name)
+            if isinstance(cached, dict) and "cuts_per_minute" in cached:
+                continue   # already read by the current engine
+            try:
+                cache[f.name] = _analyze_reference_style(f.read_bytes())
+            except Exception:
+                pass       # keep the old read if a re-analysis fails
+        _save_style_analyses(client_id, cache)
+    analyses = list(cache.values())
     profile = _synthesize_style_profile(analyses) if analyses else None
     clients = load_clients()
     for c in clients:

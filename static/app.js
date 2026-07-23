@@ -1248,7 +1248,11 @@ function renderStyleProfile(profile, clipCount = 0, clientId = null) {
   if (isUpper) applied.push('ALL-CAPS captions');
   if (profile.caption_text_color && String(profile.caption_text_color).toLowerCase() !== 'none') applied.push(`${profile.caption_text_color} text`);
   if (profile.caption_highlight_color && String(profile.caption_highlight_color).toLowerCase() !== 'none') applied.push(`${profile.caption_highlight_color} highlight`);
-  if (profile.pacing && profile.pacing !== 'medium') applied.push(`${profile.pacing} cuts`);
+  if (profile.caption_font && !['none', 'rounded', 'classic'].includes(String(profile.caption_font).toLowerCase())) applied.push(`${profile.caption_font} caption font`);
+  if (typeof profile.cuts_per_minute === 'number' && profile.cuts_per_minute > 0) applied.push(`${profile.cuts_per_minute} cuts/min pacing`);
+  else if (profile.pacing && profile.pacing !== 'medium') applied.push(`${profile.pacing} cuts`);
+  if (profile.broll_intensity && !['none', 'ai'].includes(String(profile.broll_intensity).toLowerCase())) applied.push(`${profile.broll_intensity} B-roll`);
+  if (profile.zoom_intensity && String(profile.zoom_intensity).toLowerCase() !== 'none') applied.push(`${profile.zoom_intensity} movement`);
   const appliedLine = applied.length
     ? `<div class="style-applied">✓ Auto-applied: ${escapeHtml(applied.join(' · '))}</div>` : '';
   const header = clipCount
