@@ -15,13 +15,14 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Download Google Fonts — free substitutes for macOS system fonts
-# Caveat  → replaces Noteworthy  (handwritten title line)
-# Oswald  → replaces Impact      (big title caps)
-# Poppins → replaces Arial Bold  (word captions)
+# Caveat  → replaces Noteworthy      (handwritten title line)
+# Oswald  → replaces Impact          (big title caps + condensed captions)
+# Poppins → replaces Arial Bold      (default word captions)
+# Nunito  → replaces Arial Rounded   (rounded caption style — the Reels look)
 #
 # -f is essential: without it curl happily writes a 404 page into the .ttf and
 # exits 0, so the image builds "fine" and every render then dies with PIL's
-# "unknown file format". Caveat and Oswald are variable fonts upstream now — the
+# "unknown file format". Caveat/Oswald/Nunito are variable fonts upstream now — the
 # old static files (Caveat-Regular / static/Oswald-Bold) were deleted from the
 # repo, which is exactly how this broke. The size check catches any other junk.
 RUN mkdir -p /app/fonts && \
@@ -31,6 +32,8 @@ RUN mkdir -p /app/fonts && \
          -o /app/fonts/Oswald.ttf && \
     curl -fsSL "https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-SemiBold.ttf" \
          -o /app/fonts/Poppins-SemiBold.ttf && \
+    curl -fsSL "https://github.com/google/fonts/raw/main/ofl/nunito/Nunito%5Bwght%5D.ttf" \
+         -o /app/fonts/Nunito.ttf && \
     for f in /app/fonts/*.ttf; do \
       sz=$(wc -c < "$f"); \
       [ "$sz" -gt 20000 ] || { echo "BAD FONT (probably an error page): $f ($sz bytes)"; exit 1; }; \

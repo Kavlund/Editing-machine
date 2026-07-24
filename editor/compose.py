@@ -227,14 +227,35 @@ def overlay(edit, edl, base, out, starts, durs):
     if has_title:
         nl = "[ot]"; parts.append(f"{cur}[t1]overlay=enable='between(t,0,{title_dur})'{nl}"); cur = nl
     if has_caps:
-        nl = "[outv]"; parts.append(f"{cur}[c1]overlay=enable='between(t,0,{caps_dur:.2f})'{nl}"); cur = nl
+        nl = "[vpre]"; parts.append(f"{cur}[c1]overlay=enable='between(t,0,{caps_dur:.2f})'{nl}"); cur = nl
+    else:
+        parts.append(f"{cur}null[vpre]"); cur = "[vpre]"
+
+    # Optional fade-from-black in + fade-to-black out (when the reference fades
+    # rather than hard-cutting). Applied to the WHOLE frame after all overlays, so
+    # captions/hook fade with the picture. Never eats more than a third of the clip.
+    fade = edl.get("fade") or {}
+    fd = float(fade.get("dur", 0) or 0)
+    vdur = probe_dur(base)
+    amap, acodec = "0:a", ["-c:a", "copy"]
+    if fd > 0 and vdur > 0:
+        fd = min(fd, max(0.05, vdur / 3.0))
+        fout = max(0.0, vdur - fd)
+        parts.append(f"{cur}fade=t=in:st=0:d={fd:.3f},"
+                     f"fade=t=out:st={fout:.3f}:d={fd:.3f}[outv]")
+        # Fade the AUDIO with the picture — otherwise the voice plays at full level
+        # over a black frame and then hard-cuts, which reads as a glitch. This drops
+        # -c:a copy on the fade path (loudnorm re-encodes audio afterwards anyway).
+        parts.append(f"[0:a]afade=t=in:st=0:d={fd:.3f},"
+                     f"afade=t=out:st={fout:.3f}:d={fd:.3f}[outa]")
+        amap, acodec = "[outa]", ["-c:a", "aac", "-b:a", "192k"]
     else:
         parts.append(f"{cur}null[outv]")
 
     run(["ffmpeg","-y","-v","error",*inputs,
-         "-filter_complex",";".join(parts),"-map","[outv]","-map","0:a",
+         "-filter_complex",";".join(parts),"-map","[outv]","-map",amap,
          "-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",
-         "-c:a","copy","-shortest", str(out)], quiet=False)
+         *acodec,"-shortest", str(out)], quiet=False)
 
 
 def main():

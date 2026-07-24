@@ -117,6 +117,15 @@ def _font(kind: str) -> list:
             ("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 0),
             ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 0),
         ],
+        # Soft geometric rounded face — the look most Reels/Shorts captions use.
+        # Nunito is downloaded into /app/fonts at image build; Arial Rounded is the
+        # macOS local-dev fallback.
+        "rounded": [
+            ("/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf", 0),
+            ("/app/fonts/Nunito.ttf", 0),
+            ("/app/fonts/Poppins-SemiBold.ttf", 0),
+            ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 0),
+        ],
     }
     for path, idx in candidates.get(kind, []):
         if Path(path).exists() and _looks_like_font(path):
@@ -754,6 +763,9 @@ def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
 _DEFAULT_GRADE = ("colorlevels=rimax=0.92:gimax=0.92:bimax=0.88,"
                   "eq=saturation=1.0:contrast=1.02,unsharp=5:5:0.3:5:5:0.0")
 _CAPTION_SIZE  = {"small": 60, "medium": 74, "large": 92}
+# Caption line width as a FRACTION of frame width, before words wrap. 'narrow'
+# forces the short 1-2-word stacked lines many Reels use; 'wide' keeps long lines.
+_CAPTION_WIDTH = {"narrow": 0.55, "medium": 0.80, "wide": 0.94}
 # Where captions sit vertically, as a FRACTION of frame height so the same
 # preset works on 9:16, 1:1 and 16:9 without landing off-screen.
 _CAPTION_Y     = {"top": 0.17, "center": 0.50, "middle": 0.50,
@@ -836,18 +848,84 @@ def _target_frame(src: Path, fmt: str = "auto") -> tuple[int, int]:
 
 
 def _grade_from_style(style: dict) -> str:
-    """Turn an analyzed reference clip's look into a concrete ffmpeg grade string."""
+    """Turn an analyzed reference clip's look into a concrete ffmpeg grade string.
+
+    Stronger and tone-aware: white balance (colorlevels) + a real SPLIT-TONE
+    (colorbalance, cool shadows / warm highlights for the cinematic look) + an
+    S-curve for contrast + saturation. The old version was a single gentle
+    colorlevels+eq pass, so every grade came out looking nearly the same."""
     warmth   = (style.get("grade_warmth") or "neutral").lower()
     contrast = (style.get("grade_contrast") or "normal").lower()
     sat      = (style.get("grade_saturation") or "normal").lower()
-    # colorlevels: lower max = that channel boosted more
-    if "warm" in warmth:   rimax, gimax, bimax = 0.90, 0.91, 0.95
-    elif "cool" in warmth: rimax, gimax, bimax = 0.95, 0.95, 0.82
-    else:                  rimax, gimax, bimax = 0.92, 0.92, 0.88
-    c = {"low": 0.98, "normal": 1.02, "high": 1.10}.get(contrast, 1.02)
-    s = {"muted": 0.85, "normal": 1.0, "vivid": 1.18}.get(sat, 1.0)
-    return (f"colorlevels=rimax={rimax}:gimax={gimax}:bimax={bimax},"
-            f"eq=saturation={s}:contrast={c},unsharp=5:5:0.3:5:5:0.0")
+
+    parts = []
+    # 1. Overall white balance. Lower channel max = that channel lifted more.
+    if "warm" in warmth:   rimax, gimax, bimax = 0.88, 0.90, 0.96
+    elif "cool" in warmth: rimax, gimax, bimax = 0.96, 0.95, 0.84
+    else:                  rimax, gimax, bimax = 0.92, 0.92, 0.90
+    parts.append(f"colorlevels=rimax={rimax}:gimax={gimax}:bimax={bimax}")
+
+    # 2. Contrast as an S-curve (a flat eq contrast can't shape tone the same way).
+    if "high" in contrast:
+        parts.append("curves=all='0/0 0.25/0.19 0.5/0.5 0.75/0.83 1/1'")
+    elif "low" in contrast:
+        parts.append("curves=all='0/0.04 0.5/0.5 1/0.96'")
+
+    # 3. Split-tone: this is what makes a grade read as "graded" instead of a
+    #    faint tint. Warm = cool shadows + warm highlights (teal/orange);
+    #    cool = blue shadows + slightly cool highlights.
+    if "warm" in warmth:
+        parts.append("colorbalance=rs=-0.04:bs=0.05:rm=0.03:bm=-0.03:rh=0.07:bh=-0.06")
+    elif "cool" in warmth:
+        parts.append("colorbalance=rs=-0.03:bs=0.07:rm=-0.02:bm=0.03:rh=-0.03:bh=0.06")
+
+    # 4. Saturation (wider range than before so 'vivid' actually pops).
+    s = {"muted": 0.80, "normal": 1.03, "vivid": 1.28}.get(sat, 1.03)
+    parts.append(f"eq=saturation={s}")
+
+    parts.append("unsharp=5:5:0.3:5:5:0.0")
+    return ",".join(parts)
+
+
+def _beat_zoom_events(edl_ranges: list, total_out: float,
+                      cpm, zoom_intensity: str) -> list:
+    """Turn the reference's movement level into TIMED punch-in-and-hold zooms.
+
+    The old behaviour was a single imperceptible whole-clip drift; a "punchy"
+    reference needs discrete snap zooms on the beat. Cadence and strength come
+    from the intensity label, sharpened by the measured cut rate (cpm), and each
+    zoom is snapped to a sentence/segment start when one is close so it lands on
+    a natural beat. Returns [{at, duration, strength}] in OUTPUT-video seconds."""
+    zi = (zoom_intensity or "").strip().lower()
+    if zi == "punchy":     strength, iv = 0.15, 4.5
+    elif zi == "frequent": strength, iv = 0.11, 6.0
+    elif zi == "subtle":   strength, iv = 0.08, 9.0
+    else:                  return []
+    if isinstance(cpm, (int, float)) and cpm > 0:
+        if cpm >= 25:   iv *= 0.70     # very cutty reference -> zoom more often
+        elif cpm >= 12: iv *= 0.85
+    iv = max(3.0, iv)
+    if total_out <= 3.5 or not edl_ranges:
+        return []
+
+    seg_starts, acc = [], 0.0
+    for r in edl_ranges:
+        seg_starts.append(acc)
+        acc += max(0.0, float(r["end"]) - float(r["start"]))
+
+    def _snap(t):
+        near = [s for s in seg_starts if abs(s - t) <= 1.0 and s >= 1.0]
+        return min(near, key=lambda s: abs(s - t)) if near else t
+
+    events, t = [], iv
+    while t < total_out - 1.5:
+        at = round(_snap(t), 2)
+        if at >= 1.0 and (not events or at - events[-1]["at"] >= 2.0):
+            dur = round(min(2.2, max(1.2, iv * 0.5)), 2)
+            dur = min(dur, max(1.0, total_out - at - 0.3))
+            events.append({"at": at, "duration": dur, "strength": strength})
+        t += iv
+    return events[:14]
 
 
 def _auto_edl(project_dir: Path, source_map: dict, client: dict,
@@ -919,7 +997,13 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
     if pos and pos in _CAPTION_Y:
         cap_y = _CAPTION_Y[pos] * out_h          # presets are fractions of frame height
     cap_y = int(max(0.10 * out_h, min(0.92 * out_h, cap_y)))
-    cap_max_w = int(float(editing.get("caption_max_width", 960)) * (out_w / 1080.0))
+    # Caption line width: the reference's look (narrow stacked lines vs wide lines)
+    # wins over the client default. narrow -> forces the short 1-2-word Reels stack.
+    _lw = str(directives.get("caption_line_width") or style.get("caption_line_width") or "").strip().lower()
+    if _lw in _CAPTION_WIDTH:
+        cap_max_w = int(_CAPTION_WIDTH[_lw] * out_w)
+    else:
+        cap_max_w = int(float(editing.get("caption_max_width", 960)) * (out_w / 1080.0))
     cap_max_w = max(120, min(out_w - 40, cap_max_w))
 
     # ALL-CAPS captions if the reference uses them (or a mandatory directive asks)
@@ -959,6 +1043,8 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
         fonts["caption"] = _font("impact")        # Oswald — tall condensed
     elif "hand" in _cf or "script" in _cf or "marker" in _cf:
         fonts["caption"] = _font("handwritten")   # Caveat — handwritten
+    elif "round" in _cf or "soft" in _cf:
+        fonts["caption"] = _font("rounded")       # Nunito / Arial Rounded — soft geometric
     edl_sources = {
         n: str(s["norm"].relative_to(project_dir))
         for n, s in source_map.items()
@@ -1006,6 +1092,14 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
         "zoom_strength": zoom_strength,
         "brand":         brand,
     }
+
+    # Transitions: if the reference fades in/out (rather than hard-cutting), carry a
+    # fade config the renderer applies as a fade-from-black in and fade-to-black out
+    # on the finished video. We deliberately do NOT cross-dissolve every jump cut —
+    # that looks wrong on a talking head.
+    _trans = str(directives.get("transition_style") or style.get("transition_style") or "").strip().lower()
+    if "fade" in _trans or "dissolve" in _trans or "dip" in _trans:
+        edl["fade"] = {"dur": 0.4}
 
     # Only add a title card if the client profile has one configured
     title_cfg = editing.get("title")
@@ -1227,12 +1321,23 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             # Hook / keyword-emphasis / zoom come from the per-video instructions
             # (or a mandatory hook rule).
             _force_hook = directives.get("hook") == "force"
-            if palmier_instructions or _force_hook:
+            # A reference clip with a bold on-screen hook should PRODUCE a hook on
+            # its own, with no typed instruction — previously hook_style was dead.
+            _profile_hook = str((client.get("style_profile") or {}).get("hook_style") or "").strip().lower()
+            _wants_profile_hook = (_profile_hook == "bold") and directives.get("hook") != "off"
+            if palmier_instructions or _force_hook or _wants_profile_hook:
                 _check_cancelled(job_path)
                 _log(job_path, "AI: building per-video edit plan...")
                 eff_instructions = palmier_instructions
-                if _force_hook and "hook" not in instr_l:
-                    eff_instructions = (eff_instructions + " Always add a hook.").strip()
+                # _force_hook is a MANDATORY client rule → always ensure a hook.
+                # The profile's bold hook only adds one when the creator typed NO
+                # per-video instruction, so an explicit request (e.g. "keep it clean,
+                # no on-screen text") is never silently overridden by the profile.
+                _add_hook = _force_hook or (_wants_profile_hook and not palmier_instructions)
+                if _add_hook and "hook" not in instr_l:
+                    eff_instructions = (eff_instructions + " Always add a short punchy on-screen hook.").strip()
+                    if _wants_profile_hook and not palmier_instructions and not _force_hook:
+                        _log(job_path, "Style match: reference has a bold hook → adding one to this video")
                 plan = _generate_edit_plan(source_map, eff_instructions, client,
                                            anthropic_key, lambda m: _log(job_path, m))
                 hook_plan     = plan["hook"]
@@ -1311,6 +1416,22 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         # When the timeline UI has set zooms explicitly, it is the source of truth:
         # ignore the AI-parsed events and use only the manual list.
         base_events = [] if job.get("zoom_manual") else list(zoom_events)
+
+        # If nothing explicit set zooms (no per-video instruction produced events,
+        # no manual timeline edits), let the reference's movement style place beat
+        # zooms — so a "punchy" inspiration actually punches instead of the faint
+        # whole-clip drift that used to be all zoom_intensity did.
+        _profile_zoom_meta = None
+        if not job.get("zoom_manual") and not base_events and directives.get("zoom") != "off":
+            _zsp = client.get("style_profile") or {}
+            _zi  = str(_zsp.get("zoom_intensity") or "").strip().lower()
+            if _zi in ("subtle", "frequent", "punchy"):
+                base_events = _beat_zoom_events(
+                    edl["ranges"], total_out, _zsp.get("cuts_per_minute"), _zi)
+                if base_events:
+                    _profile_zoom_meta = {"cpm": _zsp.get("cuts_per_minute"), "zi": _zi}
+                    _log(job_path, f"Zoom: reference movement '{_zi}' → placing "
+                                   f"{len(base_events)} beat zoom(s)")
         def _z_removed(at: float) -> bool:
             return any(abs(at - float(r.get("at", -999))) < 0.4 for r in z_remove)
         merged = []
@@ -1345,6 +1466,10 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         _jz["output_duration"] = round(total_out, 2)
         job_path.write_text(json.dumps(_jz, indent=2))
         (project_dir / "edl.json").write_text(json.dumps(edl, indent=2))
+        # Only auto-placed beat zooms on an otherwise-untouched video can be safely
+        # re-placed on the tightened timeline after decay_clip (below). If the user
+        # has hand-edited zooms via chat, their absolute times are left alone.
+        _reanchor_zoom = bool(_profile_zoom_meta) and not z_add and not z_remove
 
         # ── 4b. Inject B-roll — AI-matched to what's being said ────────────────
         client_id   = job.get("client_id", "")
@@ -1414,6 +1539,10 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         if directives.get("broll") == "off":
             broll_count = 0
             _log(job_path, "B-roll: disabled by the client's specific instructions")
+
+        # Did the client actually HAVE a library? (before a 0-count empties it, so
+        # the empty-library warning below never fires when b-roll was just disabled.)
+        _had_clips = bool(clips)
 
         if clips and broll_count == 0:
             _log(job_path, "B-roll: set to 0 for this video — skipping")
@@ -1543,14 +1672,58 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
 
             edl["broll"] = broll_entries
             (project_dir / "edl.json").write_text(json.dumps(edl, indent=2))
+        elif _had_clips:
+            # Clips exist but b-roll was deliberately zeroed/disabled for this video
+            # (the reason was already logged just above) — say nothing misleading.
+            pass
         else:
-            _log(job_path, "B-roll: no clips in this client's library — skipping")
+            # Genuinely no library. The reference footage itself is never copied (it
+            # belongs to someone else), so if the reference is B-roll heavy, tell the
+            # owner the ONE thing to do to get cutaways.
+            _bi_want = str((client.get("style_profile") or {}).get("broll_intensity") or "").strip().lower()
+            if _bi_want in ("light", "moderate", "heavy"):
+                _log(job_path, f"B-roll: the reference style is '{_bi_want}' on cutaways, but this "
+                               f"client has NO B-roll clips to use — add clips to the client's B-roll "
+                               f"library (or their Drive B-roll folder) and re-render to get them. "
+                               f"Rendering this pass without B-roll.")
+            else:
+                _log(job_path, "B-roll: no clips in this client's library — skipping")
 
         # ── 5. Tighten cuts ────────────────────────────────────────────────────
         _check_cancelled(job_path)
         _set_status(job_path, "rendering")
         _log(job_path, "Tightening cuts (decay_clip)...")
         _run("decay_clip.py", str(project_dir))
+
+        # ── 5a. Re-anchor auto beat zooms to the TIGHTENED timeline ────────────
+        # decay_clip trims dead air from every range in place, so the output gets
+        # shorter and the pre-decay beat-zoom times drift late (and trailing ones
+        # can fall off the new end). Re-place them on the decayed ranges so each
+        # zoom lands on its real beat. Only for cleanly auto-placed zooms.
+        if _reanchor_zoom:
+            try:
+                _de   = json.loads((project_dir / "edl.json").read_text())
+                _tot2 = sum(r["end"] - r["start"] for r in _de["ranges"]) or 0.0
+                _ev2  = _beat_zoom_events(_de["ranges"], _tot2,
+                                          _profile_zoom_meta["cpm"], _profile_zoom_meta["zi"])
+                _clamped = []
+                for e in _ev2:
+                    at  = min(float(e["at"]), max(0.0, _tot2 - 0.5))
+                    dur = max(0.8, min(6.0, min(float(e["duration"]), max(0.8, _tot2 - at))))
+                    strg = max(0.06, min(0.30, float(e["strength"])))
+                    _clamped.append({"at": round(at, 2), "duration": round(dur, 2), "strength": round(strg, 3)})
+                if _clamped:
+                    _de["zooms"] = _clamped
+                else:
+                    _de.pop("zooms", None)
+                (project_dir / "edl.json").write_text(json.dumps(_de, indent=2))
+                _jr = json.loads(job_path.read_text())
+                _jr["zoom_last"] = _clamped
+                _jr["output_duration"] = round(_tot2, 2)
+                job_path.write_text(json.dumps(_jr, indent=2))
+                _log(job_path, f"Zoom: re-anchored {len(_clamped)} beat zoom(s) to the tightened cut")
+            except Exception as _e:
+                _log(job_path, f"Zoom: re-anchor skipped ({_e}) — using pre-decay placement")
 
         # ── 6. Compose ─────────────────────────────────────────────────────────
         _log(job_path, "Rendering — normalize → concat → overlays → loudnorm (this takes a while)...")

@@ -774,9 +774,11 @@ _STYLE_PROMPT = """These are frames sampled EVENLY across a short-form video the
   "caption_highlight_color": "the colour of the emphasised / currently-spoken (karaoke) word as a hex or colour name; 'none' if the words never change colour",
   "caption_uppercase": true,
   "caption_font": "rounded | condensed | classic | handwritten | none  (the caption typeface feel)",
+  "caption_line_width": "narrow | medium | wide  (how wide the caption lines run before wrapping — narrow forces short 1-2 word lines stacked, wide keeps long single lines)",
   "broll_intensity": "none | light | moderate | heavy  (how much cutaway / B-roll footage is layered over the main speaker — judge from how often the frames cut to non-speaker shots, informed by the cut rate)",
   "zoom_intensity": "none | subtle | frequent | punchy  (how much the framing pushes in, punches, or moves)",
   "hook_style": "bold | subtle | none  (is there a big on-screen hook / title, or not)",
+  "transition_style": "none | fade  ('fade' if the clip fades in from black at the start, fades out at the end, or uses dip transitions; 'none' if it hard-cuts throughout)",
   "summary": "2-3 sentence overall style description an editor could follow to match this look"
 }"""
 
@@ -873,9 +875,11 @@ _STYLE_SYNTH_PROMPT = """You are given style analyses of several short clips a c
   "caption_highlight_color": "the karaoke / emphasis word colour as hex or colour name; 'none' if words never change colour",
   "caption_uppercase": true,
   "caption_font": "rounded | condensed | classic | handwritten | none",
+  "caption_line_width": "narrow | medium | wide",
   "broll_intensity": "none | light | moderate | heavy",
   "zoom_intensity": "none | subtle | frequent | punchy",
   "hook_style": "bold | subtle | none",
+  "transition_style": "none | fade",
   "summary": "2-3 sentence description of the creator's combined preferred style",
   "features": ["3-6 short plain-language bullets stating exactly what EVERY future video for this creator will now use, e.g. 'Bold centred karaoke captions', 'Warm, high-contrast colour grade', 'Fast, punchy cuts with heavy B-roll', 'Big all-caps hook text'"]
 }"""

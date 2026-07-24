@@ -330,7 +330,9 @@ def build_captions(edit, edl):
     chunks, timed = build_caption_chunks(edit, edl)
     print(f"captions: {len(chunks)} chunks (karaoke word-sync)")
 
-    f_cap = font(fonts["caption"], cs.get("font_size", 60))
+    # weight only bites on VARIABLE fonts (Nunito/Oswald/Caveat) — static faces
+    # (Poppins-SemiBold, Arial Bold) ignore it — so captions render bold either way.
+    f_cap = font(fonts["caption"], cs.get("font_size", 60), weight=cs.get("weight", 700))
     cy, max_w = cs.get("y", 1300), cs.get("max_width", 960)
     UP = bool(cs.get("uppercase"))
     def _disp(t): return t.upper() if UP else t   # display-only ALL CAPS (karaoke stays synced)
