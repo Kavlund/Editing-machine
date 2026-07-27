@@ -1919,8 +1919,20 @@ _RENDERING: set   = set()    # job ids with a live render
 _RENDER_QUEUED: set = set()  # edits arrived mid-render -> run once more after
 _render_defer     = threading.local()   # per-chat-turn batching
 
+# Global cap on how many renders run their heavy ffmpeg encodes at once. Different
+# JOBS previously rendered fully concurrently (the _RENDERING set only stops the
+# SAME job doubling up), so two videos processing together stacked their encodes
+# and OOM-killed the container (SIGKILL 9 on ffmpeg). Serialize by default; raise
+# MAX_CONCURRENT_RENDERS only on an instance with the RAM to spare.
+try:
+    _MAX_RENDERS = max(1, int(os.environ.get("MAX_CONCURRENT_RENDERS", "1")))
+except (TypeError, ValueError):
+    _MAX_RENDERS = 1
+_RENDER_SEM = threading.Semaphore(_MAX_RENDERS)
+
 
 def _render_worker(job_id: str):
+    _RENDER_SEM.acquire()   # wait here if another render is already using the box
     try:
         run_pipeline(job_id, JOBS_DIR, UPLOADS_DIR, ELEVENLABS_API_KEY)
     except Exception as e:
@@ -1940,6 +1952,7 @@ def _render_worker(job_id: str):
         except Exception:
             traceback.print_exc()
     finally:
+        _RENDER_SEM.release()   # let the next queued render take the box
         with _RENDER_LOCK:
             _RENDERING.discard(job_id)
             again = job_id in _RENDER_QUEUED

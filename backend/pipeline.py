@@ -1251,16 +1251,38 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 _mock_transcribe(s["raw"], project_dir)
                 _log(job_path, f"transcribe: mock done — {s['trans'].name}")
             else:
-                _log(job_path, f"transcribe: {s['raw'].name} ({lang or 'auto-detect'}, {n_spk or '?'} speakers)")
-                transcribe_one(
-                    video=s["raw"],
-                    edit_dir=project_dir,
-                    api_key=elevenlabs_key,
-                    language=lang,
-                    num_speakers=n_spk,
-                    verbose=False,
-                )
+                provider = os.environ.get("TRANSCRIBE_PROVIDER", "auto").strip().lower()
+                # Try ElevenLabs Scribe (diarized, high quality) unless forced local
+                # or there is no key. On ANY Scribe failure — quota_exceeded, 401,
+                # network — fall through to local Whisper so a dead quota can never
+                # hard-stop a render again (this is exactly Max's quota_exceeded).
+                if provider != "local" and elevenlabs_key:
+                    try:
+                        _log(job_path, f"transcribe: {s['raw'].name} via ElevenLabs Scribe "
+                                       f"({lang or 'auto-detect'}, {n_spk or '?'} speakers)")
+                        transcribe_one(
+                            video=s["raw"], edit_dir=project_dir, api_key=elevenlabs_key,
+                            language=lang, num_speakers=n_spk, verbose=False)
+                    except Exception as e:
+                        _log(job_path, f"transcribe: ElevenLabs failed ({str(e)[:180]}) "
+                                       f"— falling back to local Whisper")
+                if not s["trans"].exists():
+                    from transcribe_local import transcribe_local
+                    _log(job_path, f"transcribe: {s['raw'].name} via local Whisper "
+                                   f"(model {os.environ.get('WHISPER_MODEL', 'small')}, "
+                                   f"{lang or 'auto-detect'})")
+                    transcribe_local(video=s["raw"], edit_dir=project_dir,
+                                     language=lang, verbose=False)
                 _log(job_path, f"transcribe: done — {s['trans'].name}")
+
+        # Free the local Whisper model (if it was loaded) BEFORE the memory-heavy
+        # ffmpeg encode stages, so transcription RAM never stacks with compose /
+        # normalize and worsens the OOM that SIGKILLs those encodes.
+        try:
+            from transcribe_local import unload_model
+            unload_model()
+        except Exception:
+            pass
 
         # ── 3a. Resolve the on-camera speaker robustly ─────────────────────────
         # The client is configured for one speaker (e.g. speaker_0), but diarization

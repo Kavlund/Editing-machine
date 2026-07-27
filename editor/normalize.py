@@ -13,8 +13,12 @@ Usage:
     python normalize.py <input.mov> <output_v30.mov> --height 1920
 """
 from __future__ import annotations
-import argparse, subprocess, sys
+import argparse, os, subprocess, sys
 from pathlib import Path
+
+# Cap x264 threads to bound encode memory on small containers. Unbounded threads
+# on a large source is part of what OOM-killed (SIGKILL 9) the normalize encode.
+FF_THREADS = os.environ.get("FFMPEG_THREADS", "4")
 
 
 def normalize(src: Path, dst: Path, height: int = 1920, crf: int = 18,
@@ -36,7 +40,7 @@ def normalize(src: Path, dst: Path, height: int = 1920, crf: int = 18,
     try:
         subprocess.run(
             ["ffmpeg", "-y", "-v", "error", "-i", str(src),
-             "-vf", vf, "-fps_mode", "cfr",
+             "-vf", vf, "-fps_mode", "cfr", "-threads", FF_THREADS,
              "-c:v", "libx264", "-crf", str(crf), "-preset", "fast",
              "-c:a", "pcm_s16le", "-ar", "48000", str(dst)],
             check=True, timeout=timeout)

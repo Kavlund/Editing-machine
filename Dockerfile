@@ -11,8 +11,10 @@ RUN apt-get update && \
         curl \
         tzdata \
         fonts-liberation \
-        fonts-freefont-ttf && \
+        fonts-freefont-ttf \
+        libgomp1 && \
     rm -rf /var/lib/apt/lists/*
+# libgomp1: OpenMP runtime required by ctranslate2 (faster-whisper) on slim Debian.
 
 # Download Google Fonts — free substitutes for macOS system fonts
 # Caveat  → replaces Noteworthy      (handwritten title line)
@@ -43,6 +45,18 @@ WORKDIR /app
 
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Bake the local-transcription model into the image so there is NO runtime
+# download (stable, offline-capable). 'small' is the default; WHISPER_MODEL can be
+# raised per-instance (medium/large-v3) but a larger model then downloads on first
+# use. This is the fallback that fires when ElevenLabs Scribe quota is exhausted.
+ENV WHISPER_MODEL=small
+ENV WHISPER_MODEL_DIR=/app/models
+# Non-fatal: if the HF download hiccups at build, the model downloads at first use
+# instead (runtime has network + a writable /app/models). A model hiccup must never
+# break the whole deploy the way a bad font would.
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8', download_root='/app/models')" \
+    || echo "WARN: whisper model prefetch failed — it will download on first render"
 
 COPY . .
 

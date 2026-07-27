@@ -14,8 +14,12 @@ A project dir contains: edl.json, transcripts/<source>.json, and the normalised
 <source>_v30.mov clips referenced by edl["sources"].
 """
 from __future__ import annotations
-import json, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
+
+# Cap x264 threads to bound encode memory on small containers (unbounded threads
+# stacking across encodes is part of what OOM-killed these steps, SIGKILL 9).
+FF_THREADS = os.environ.get("FFMPEG_THREADS", "4")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from loudnorm import apply_loudnorm_two_pass
@@ -63,7 +67,7 @@ def extract_segments(edit, edl):
         src = edit/edl["sources"][r["source"]]
         run(["ffmpeg","-y","-v","error","-ss",f"{sq:.4f}","-i",str(src),
              "-t",f"{dur:.4f}","-vf",vf,"-af",af,
-             "-c:v","libx264","-preset","fast","-crf","20",
+             "-threads",FF_THREADS,"-c:v","libx264","-preset","fast","-crf","20",
              "-pix_fmt","yuv420p","-r",str(FPS),"-vsync","cfr",
              "-c:a","pcm_s16le","-ar","48000", str(out)])
         print(f"  seg {i:02d}  {sq:7.3f}+{dur:5.3f}s")
@@ -86,7 +90,7 @@ def apply_zoom(src, out, strength, ow=1080, oh=1920):
     vf = (f"zoompan=z='{zexpr}':d=1:"
           f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={ow}x{oh}:fps={FPS}")
     run(["ffmpeg","-y","-v","error","-i",str(src),
-         "-vf",vf,"-c:v","libx264","-preset","fast","-crf","18",
+         "-vf",vf,"-threads",FF_THREADS,"-c:v","libx264","-preset","fast","-crf","18",
          "-pix_fmt","yuv420p","-c:a","copy", str(out)])
     print(f"  zoom applied: 1.0 -> {end_z:.3f} over {total} frames")
 
@@ -113,7 +117,7 @@ def apply_timed_zooms(src, out, events, ow=1080, oh=1920):
     vf = (f"zoompan=z='{zexpr}':d=1:"
           f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={ow}x{oh}:fps={FPS}")
     run(["ffmpeg","-y","-v","error","-i",str(src),
-         "-vf",vf,"-c:v","libx264","-preset","fast","-crf","18",
+         "-vf",vf,"-threads",FF_THREADS,"-c:v","libx264","-preset","fast","-crf","18",
          "-pix_fmt","yuv420p","-c:a","copy", str(out)])
     print(f"  timed zooms: {len(events)} punch-in(s) at "
           + ", ".join(f"{float(e.get('at',0)):.1f}s" for e in events))
@@ -254,7 +258,7 @@ def overlay(edit, edl, base, out, starts, durs):
 
     run(["ffmpeg","-y","-v","error",*inputs,
          "-filter_complex",";".join(parts),"-map","[outv]","-map",amap,
-         "-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",
+         "-threads",FF_THREADS,"-c:v","libx264","-preset","fast","-crf","18","-pix_fmt","yuv420p",
          *acodec,"-shortest", str(out)], quiet=False)
 
 

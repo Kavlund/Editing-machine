@@ -1,5 +1,8 @@
 aiofiles==23.2.1
 anthropic==0.115.0
+# Local transcription fallback (no external API / no per-key quota). CPU-only via
+# CTranslate2 — pulls ctranslate2, av, tokenizers, onnxruntime; no PyTorch.
+faster-whisper==1.1.1
 fastapi==0.111.0
 numpy==2.5.0
 pillow==12.2.0

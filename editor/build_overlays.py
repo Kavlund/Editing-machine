@@ -14,9 +14,13 @@ Usage:
     python build_overlays.py <project_dir> [all|title|captions]
 """
 from __future__ import annotations
-import json, math, re, shutil, subprocess, sys
+import gc, json, math, os, re, shutil, subprocess, sys
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+# Cap ffmpeg encoder threads to keep encode memory down on small containers
+# (unbounded threads is part of what OOM-killed the ProRes caption encode).
+FF_THREADS = os.environ.get("FFMPEG_THREADS", "4")
 
 # Overlay canvas. These are DEFAULTS ONLY — main() overrides them from the EDL so
 # overlays are built at the video's real frame size. Never assume 9:16 here: a
@@ -109,6 +113,7 @@ def crop_to_content(img):
 def encode_mov(frames_dir, out_path):
     subprocess.run(["ffmpeg","-y","-v","error","-framerate",str(FPS),
                     "-i", str(frames_dir/"f_%05d.png"),
+                    "-threads", FF_THREADS,
                     "-c:v","prores_ks","-profile:v","4444","-pix_fmt","yuva444p10le",
                     str(out_path)], check=True)
 
@@ -389,6 +394,10 @@ def build_captions(edit, edl):
                 layer.putalpha(layer.split()[3].point(lambda v: int(v*alpha)))
             canvas.alpha_composite(layer, (ccx-sw//2, ccy-sh//2))
         canvas.save(frames/f"f_{i:05d}.png")
+    # Release every pre-rendered caption image before the ProRes encode — on a long
+    # video these variant bitmaps are hundreds of MB, and holding them WHILE ffmpeg
+    # encodes is part of what OOM-killed this step. The PNGs on disk are all ffmpeg needs.
+    built.clear(); gc.collect()
     encode_mov(frames, out_dir/"captions.mov"); shutil.rmtree(frames)
     print(f"captions.mov: {n} frames, {n/FPS:.2f}s")
 
