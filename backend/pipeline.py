@@ -835,11 +835,22 @@ def _target_frame(src: Path, fmt: str = "auto") -> tuple[int, int]:
     picks a format, because silently reshaping someone's footage destroys it.
     """
     fmt = (fmt or "auto").strip().lower()
-    if fmt in _FORMAT_PRESETS:
-        return _FORMAT_PRESETS[fmt]
     dims = _probe_dims(src)
+    if fmt in _FORMAT_PRESETS:
+        pw, ph = _FORMAT_PRESETS[fmt]
+        # Honour the preset ONLY when its orientation matches the source. A client
+        # set to "vertical" must NOT box a landscape course video into 9:16 with
+        # black bars — that destroys the footage. On an orientation mismatch, keep
+        # the source shape instead (the no-reformat rule wins over a stale preset).
+        if dims:
+            sw, sh = dims
+            if abs(sw - sh) < 0.04 * max(sw, sh) or (sw > sh) == (pw > ph):
+                return (pw, ph)         # square source, or same orientation -> use preset
+            # else: orientation mismatch -> fall through to keep source shape
+        else:
+            return (pw, ph)             # unreadable source -> trust the preset
     if not dims:
-        return (1080, 1920)            # unreadable source: fall back to vertical
+        return (1080, 1920)            # unreadable + no preset: fall back to vertical
     w, h = dims
     scale = _LONG_EDGE / float(max(w, h))
     scale = min(scale, 1.0)            # never upscale
