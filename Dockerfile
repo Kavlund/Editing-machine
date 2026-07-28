@@ -58,6 +58,28 @@ ENV WHISPER_MODEL_DIR=/app/models
 RUN python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8', download_root='/app/models')" \
     || echo "WARN: whisper model prefetch failed — it will download on first render"
 
+# ── Optional: Node + Remotion for code-based motion graphics ──────────────────
+# Gated behind a build arg so instances that don't use it stay light and build
+# fast. To enable on an instance: set service vars WITH_REMOTION=1 (build) and
+# REMOTION_GRAPHICS=1 (runtime). When off, no Node/Chromium is installed and the
+# pipeline uses the PIL overlays exactly as before.
+ARG WITH_REMOTION=0
+ENV REMOTION_DIR=/app/remotion
+RUN if [ "$WITH_REMOTION" = "1" ]; then \
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+      apt-get install -y --no-install-recommends \
+        nodejs \
+        libnss3 libdbus-1-3 libatk1.0-0 libgbm1 libasound2 libxrandr2 \
+        libxkbcommon0 libxfixes3 libxcomposite1 libxdamage1 \
+        libatk-bridge2.0-0 libpango-1.0-0 libcairo2 libcups2 && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+COPY remotion/package.json remotion/package-lock.json /app/remotion/
+RUN if [ "$WITH_REMOTION" = "1" ]; then \
+      cd /app/remotion && npm ci --no-audit --no-fund && \
+      ( npx remotion browser ensure || echo "WARN: remotion browser prefetch failed — downloads on first render" ); \
+    fi
+
 COPY . .
 
 # Data and uploads survive redeploys when mounted as volumes

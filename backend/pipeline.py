@@ -283,6 +283,10 @@ def _interpret_directives(spec: str, anthropic_key: str, log_fn) -> dict:
         return {}
 
 
+# The graphic templates the Remotion engine can render (Hook is handled separately).
+_GRAPHIC_TEMPLATES = ("ListCard", "Stat", "LowerThird", "QuoteCard", "Comparison")
+
+
 def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                         anthropic_key: str, log_fn) -> dict:
     """One Claude call turns per-video instructions + transcript into a concrete plan.
@@ -299,10 +303,36 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
       }
     """
     plan = {"hook": None, "keywords": [], "zoom": {"enabled": False, "strength": 0.08},
-            "zoom_events": []}
+            "zoom_events": [], "graphics": []}
     transcript = _full_transcript(source_map)
     if not transcript:
         return plan
+
+    # On-screen motion-graphic cards are only offered when this instance has the
+    # Remotion engine enabled — otherwise the model must not propose graphics that
+    # cannot render.
+    graphics_on = os.environ.get("REMOTION_GRAPHICS") == "1"
+    graphics_schema = (
+        ',\n  "graphics": [   // OPTIONAL on-screen cards; add 0-3 only where they clearly help\n'
+        '    {"template": "ListCard|Stat|LowerThird", "quote": "2-5 word EXACT phrase from the transcript where it appears", "duration_sec": 3.0, "props": { }}\n'
+        '  ]'
+    ) if graphics_on else ""
+    graphics_rules = (
+        "\n- graphics: OPTIONAL on-screen motion-graphic cards, each anchored to a spoken moment by an EXACT "
+        "short quote from the transcript. Add them ONLY where they genuinely add value — 0 to 3 per video, "
+        "NEVER on every line. Pick the right template:\n"
+        "  * ListCard — the speaker enumerates a short list of points/steps/tips. "
+        'props: {"title": "optional short header or omit", "items": ["2-5 SHORT lines, 2-5 words each"]}.\n'
+        "  * Stat — the speaker states one striking number/metric. "
+        'props: {"value": "90%" or "10x" or "$1.4B", "label": "short caption of what it means"}.\n'
+        "  * LowerThird — identify a person or brand by name. "
+        'props: {"name": "the name", "subtitle": "role or tagline"}.\n'
+        "  * QuoteCard — spotlight ONE memorable sentence the speaker says, as a pull-quote. "
+        'props: {"quote": "the sentence in normal sentence case", "attribution": "who said it, or omit"}.\n'
+        "  * Comparison — contrast two sides (before vs after, myth vs truth, X vs Y). "
+        'props: {"leftLabel": "MYTH or BEFORE", "leftText": "short", "rightLabel": "TRUTH or AFTER", "rightText": "short"}.\n'
+        "  Write the props text in the SAME language as the transcript. duration_sec 2.5-4. If nothing fits, [].\n"
+    ) if graphics_on else ""
 
     # Highest-priority: the client's mandatory specific instructions
     spec = (client.get("specific_instructions") or "").strip()
@@ -343,8 +373,9 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         "  },\n"
         '  "keywords": ["the","most","important","content","words","to","emphasize"],\n'
         '  "zoom": {"enabled": true/false, "strength": 0.06-0.12},\n'
-        '  "zoom_events": [{"at": 8.0, "duration": 2.5, "strength": 0.12}]  // timestamped punch-ins\n'
-        "}\n\n"
+        '  "zoom_events": [{"at": 8.0, "duration": 2.5, "strength": 0.12}]  // timestamped punch-ins'
+        + graphics_schema +
+        "\n}\n\n"
         "Rules:\n"
         "- LANGUAGE: write the hook and pick the keywords in the SAME language the speaker uses "
         "in the transcript (e.g. a Danish video gets a Danish hook and Danish keywords). Never translate to English.\n"
@@ -360,6 +391,7 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         "\"duration\" 1.5-3.5 (how long it holds, default 2.5), \"strength\" 0.08-0.15 (default 0.12). "
         "List every distinct time mentioned. If no specific time is mentioned, leave zoom_events empty [].\n"
         "- Respect the instructions literally. If they say no hook, hook=null. If they don't mention zoom, zoom.enabled=false and zoom_events=[]."
+        + graphics_rules
         + brand_voice
     )
     try:
@@ -398,9 +430,26 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                 except (TypeError, ValueError):
                     continue
             plan["zoom_events"] = evs
+            if graphics_on:
+                gs = []
+                for g in (parsed.get("graphics") or []):
+                    if not isinstance(g, dict):
+                        continue
+                    t = str(g.get("template", "")).strip()
+                    if t not in _GRAPHIC_TEMPLATES:
+                        continue
+                    props = g.get("props") if isinstance(g.get("props"), dict) else {}
+                    try:
+                        dur = max(1.5, min(8.0, float(g.get("duration_sec", 3.0) or 3.0)))
+                        at  = float(g.get("at_sec", 0) or 0)
+                    except (TypeError, ValueError):
+                        dur, at = 3.0, 0.0
+                    gs.append({"template": t, "quote": str(g.get("quote", "")).strip(),
+                               "at_sec": at, "duration_sec": dur, "props": props})
+                plan["graphics"] = gs[:3]   # never carpet the video with cards
         log_fn(f"AI plan: hook={'yes' if plan['hook'] else 'no'}, "
                f"{len(plan['keywords'])} keyword(s), zoom={plan['zoom']['enabled']}, "
-               f"{len(plan['zoom_events'])} timed zoom(s)")
+               f"{len(plan['zoom_events'])} timed zoom(s), {len(plan['graphics'])} graphic(s)")
     except Exception as e:
         log_fn(f"AI plan generation failed ({e}) — using safe defaults")
     return plan
@@ -683,6 +732,39 @@ def _find_quote_time(timeline: list, quote: str) -> float | None:
     return None
 
 
+def _apply_cut_spans(ranges: list, cut_spans: list, min_dur: float = 0.3) -> list:
+    """Remove SOURCE-time spans from the EDL ranges (Studio 'cut this bit out').
+
+    Each cut is {source, start, end} in the source clip's own timeline, which is
+    stable across re-renders. A range that overlaps a cut is trimmed or split; a
+    leftover shorter than min_dur is dropped."""
+    out = []
+    for r in ranges:
+        segs = [(float(r["start"]), float(r["end"]))]
+        for cs in cut_spans:
+            if not isinstance(cs, dict) or cs.get("source") != r.get("source"):
+                continue
+            try:
+                c0, c1 = float(cs["start"]), float(cs["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if c1 <= c0:
+                continue
+            nxt = []
+            for s, e in segs:
+                if c1 <= s or c0 >= e:            # no overlap
+                    nxt.append((s, e))
+                else:
+                    if s < c0: nxt.append((s, c0))  # keep the part before the cut
+                    if c1 < e: nxt.append((c1, e))  # keep the part after the cut
+            segs = nxt
+        for s, e in segs:
+            if e - s >= min_dur:
+                nr = dict(r); nr["start"] = round(s, 3); nr["end"] = round(e, 3)
+                out.append(nr)
+    return out
+
+
 def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
                 anthropic_key: str, log_fn, desired_count: int | None = None,
                 force_cards: bool = False) -> list:
@@ -850,7 +932,7 @@ def _target_frame(src: Path, fmt: str = "auto") -> tuple[int, int]:
         else:
             return (pw, ph)             # unreadable source -> trust the preset
     if not dims:
-        return (1080, 1920)            # unreadable + no preset: fall back to vertical
+        return (1080, 1920)             # unreadable + no preset: fall back to vertical
     w, h = dims
     scale = _LONG_EDGE / float(max(w, h))
     scale = min(scale, 1.0)            # never upscale
@@ -1321,6 +1403,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         zoom_enabled   = False
         zoom_strength  = 0.08
         zoom_events    = []
+        graphics_plan  = []
         filler_indices = None
         anthropic_key  = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -1378,6 +1461,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 zoom_enabled  = plan["zoom"]["enabled"]
                 zoom_strength = plan["zoom"]["strength"]
                 zoom_events   = plan.get("zoom_events", [])
+                graphics_plan = plan.get("graphics", [])
                 if hook_plan:
                     _log(job_path, f"AI: hook = '{hook_plan['text']}' "
                                    f"(shows {hook_plan['start_sec']:.0f}s–{hook_plan['start_sec']+hook_plan['duration_sec']:.0f}s)")
@@ -1419,7 +1503,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                  f"pacing {_pace}, b-roll {str(_sp.get('broll_intensity') or 'ai')}, "
                  f"movement {str(_sp.get('zoom_intensity') or 'none')}")
 
-        # Apply per-job overrides (set via the job chat) on top of the generated EDL
+        # Apply per-job overrides (set via the job chat OR the Studio editor) on top
+        # of the generated EDL.
         overrides = job.get("job_overrides", {})
         if overrides:
             if "grade" in overrides:
@@ -1430,7 +1515,36 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                            ("caption_max_width","max_width")]:
                 if ok in overrides:
                     caps[ek] = overrides[ok]
+            _oh = int(edl.get("height", 1920))
+            if "caption_position" in overrides:
+                _p = str(overrides["caption_position"]).strip().lower()
+                if _p in _CAPTION_Y:
+                    caps["y"] = int(_CAPTION_Y[_p] * _oh)
+            if "caption_uppercase" in overrides:
+                caps["uppercase"] = _truthy(overrides["caption_uppercase"])
+            if "caption_font" in overrides:
+                _cf = str(overrides["caption_font"]).strip().lower()
+                _fonts = edl.setdefault("style", {}).setdefault("fonts", {})
+                if "condens" in _cf or "impact" in _cf:   _fonts["caption"] = _font("impact")
+                elif "hand" in _cf or "script" in _cf:     _fonts["caption"] = _font("handwritten")
+                elif "round" in _cf or "soft" in _cf:      _fonts["caption"] = _font("rounded")
+                else:                                       _fonts["caption"] = _font("caption")
             _log(job_path, f"Job overrides applied: {list(overrides.keys())}")
+
+        # Studio "cut a bit out" edits: remove SOURCE-time spans from the ranges.
+        # Source time is stable across re-renders, so a cut survives regeneration.
+        cut_spans = job.get("cut_spans") or []
+        if cut_spans:
+            before = len(edl["ranges"])
+            edl["ranges"] = _apply_cut_spans(edl["ranges"], cut_spans)
+            _log(job_path, f"Studio: {len(cut_spans)} cut(s) applied "
+                           f"({before} → {len(edl['ranges'])} ranges)")
+
+        # Studio caption-TEXT edits (fix a typo, reword a line). build_overlays
+        # matches by original text, so an edit survives the regenerate re-render.
+        if job.get("caption_text_overrides"):
+            edl["caption_overrides"] = job["caption_text_overrides"]
+            _log(job_path, f"Studio: {len(job['caption_text_overrides'])} caption text edit(s)")
 
         (project_dir / "edl.json").write_text(json.dumps(edl, indent=2))
         _log(job_path, f"EDL: {len(edl['ranges'])} ranges, {sum(r['end']-r['start'] for r in edl['ranges']):.1f}s raw")
@@ -1503,6 +1617,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         # re-placed on the tightened timeline after decay_clip (below). If the user
         # has hand-edited zooms via chat, their absolute times are left alone.
         _reanchor_zoom = bool(_profile_zoom_meta) and not z_add and not z_remove
+        # Graphics are resolved AFTER decay_clip (step 5a2), because decay tightens
+        # every range and would otherwise drift each card late off its spoken moment.
 
         # ── 4b. Inject B-roll — AI-matched to what's being said ────────────────
         client_id   = job.get("client_id", "")
@@ -1758,6 +1874,60 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             except Exception as _e:
                 _log(job_path, f"Zoom: re-anchor skipped ({_e}) — using pre-decay placement")
 
+        # ── 5a2. Resolve on-screen graphics on the TIGHTENED timeline ──────────
+        # Anchor each planned card/stat/lower-third to its spoken moment using the
+        # POST-decay ranges (reloaded from disk, since decay_clip ran as a subprocess),
+        # so a card lands on the right sentence instead of drifting late. A graphic
+        # whose quote cannot be located is DROPPED, never dumped at t=0. build_overlays
+        # renders each via Remotion; compose overlays it.
+        if graphics_plan:
+            try:
+                _dg    = json.loads((project_dir / "edl.json").read_text())
+                _gspk  = editing.get("caption_speaker", "speaker_0")
+                _gtl   = _build_word_timeline(source_map, _gspk, _dg)
+                _gtot  = sum(r["end"] - r["start"] for r in _dg["ranges"]) or 0.0
+                _resolved = []
+                for g in graphics_plan:
+                    if not isinstance(g, dict):
+                        continue
+                    tmpl = g.get("template")
+                    if tmpl not in _GRAPHIC_TEMPLATES:
+                        continue
+                    at = _find_quote_time(_gtl, g.get("quote", "")) if g.get("quote") else None
+                    if at is None:
+                        # Can't anchor it to a real spoken moment -> don't show it.
+                        _log(job_path, f"Graphics: dropped {tmpl} — quote '{str(g.get('quote',''))[:40]}' not found")
+                        continue
+                    at  = max(0.0, min(float(at), max(0.0, _gtot - 1.0)))
+                    dur = max(1.0, min(8.0, float(g.get("duration_sec", 3.0) or 3.0)))
+                    dur = min(dur, max(1.0, _gtot - at))
+                    _resolved.append({"template": tmpl, "props": g.get("props") or {},
+                                      "start_sec": round(at, 2), "duration_sec": round(dur, 2)})
+                if _resolved:
+                    _dg["graphics"] = _resolved
+                    (project_dir / "edl.json").write_text(json.dumps(_dg, indent=2))
+                    _log(job_path, "Graphics: " + ", ".join(
+                        f"{g['template']}@{g['start_sec']:.1f}s" for g in _resolved))
+            except Exception as _e:
+                _log(job_path, f"Graphics: resolution skipped ({_e})")
+
+        # ── 5a3. Studio timeline MOVES: the editor's positions win over AI placement.
+        # graphics carry absolute start_sec; b-roll carries at_sec (absolute), both
+        # honoured directly by compose. Applied last so nothing regenerates over them.
+        _gov, _bov = job.get("graphics_override"), job.get("broll_override")
+        if _gov is not None or _bov is not None:
+            try:
+                _dm = json.loads((project_dir / "edl.json").read_text())
+                if _gov is not None:
+                    _dm["graphics"] = _gov
+                    _log(job_path, f"Studio: {len(_gov)} graphic position(s) set")
+                if _bov is not None:
+                    _dm["broll"] = _bov
+                    _log(job_path, f"Studio: {len(_bov)} b-roll position(s) set")
+                (project_dir / "edl.json").write_text(json.dumps(_dm, indent=2))
+            except Exception as _e:
+                _log(job_path, f"Studio moves skipped ({_e})")
+
         # ── 6. Compose ─────────────────────────────────────────────────────────
         _log(job_path, "Rendering — normalize → concat → overlays → loudnorm (this takes a while)...")
         _run("compose.py", str(project_dir))
@@ -1770,14 +1940,37 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         size_mb = final.stat().st_size / (1024 * 1024)
         _log(job_path, f"Done — final.mp4 is {size_mb:.1f} MB")
 
-        # Persist edl.json on the volume (tiny) so the "Edit video" chat can read
-        # the finished cut's settings after the scratch dir is wiped.
+        # Persist edl.json + captions.json on the volume (tiny) so the Studio editor
+        # can read the finished cut's settings + caption text after scratch is wiped.
+        # raw_dir may not exist yet for a Drive-pulled + Drive-delivered job (no local
+        # upload created it, and delivery kept no local copy) — create it, or these
+        # writes fail silently and the editor shows "no saved edit".
+        raw_dir.mkdir(parents=True, exist_ok=True)
         try:
             edl_src = project_dir / "edl.json"
             if edl_src.exists():
                 shutil.copy2(edl_src, raw_dir / "edl.json")
+            cap_src = project_dir / "captions.json"
+            if cap_src.exists():
+                shutil.copy2(cap_src, raw_dir / "captions.json")
         except Exception:
             pass
+
+        # Caption-free proxy for the Studio "captions off" preview, so the caption
+        # drag has no burned-in duplicate. It's the post-cut/zoom base (no overlays),
+        # downscaled small. Best-effort — the editor falls back to the full video.
+        try:
+            _base = project_dir / ("base30_zoom.mkv" if (project_dir / "base30_zoom.mkv").exists()
+                                   else "base30.mkv")
+            if _base.exists():
+                subprocess.run(
+                    ["ffmpeg", "-y", "-v", "error", "-i", str(_base),
+                     "-vf", "scale='min(720,iw)':-2", "-threads", os.environ.get("FFMPEG_THREADS", "4"),
+                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "30",
+                     "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart",
+                     str(raw_dir / "proxy.mp4")], check=True, timeout=300)
+        except Exception as _e:
+            _log(job_path, f"Studio: caption-free proxy skipped ({_e})")
 
         client_name = job.get("client_name", "Unknown client")
         folder      = job.get("folder_name", job_id)

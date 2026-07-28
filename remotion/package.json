@@ -1,0 +1,12 @@
+{
+  "name": "editing-machine-graphics",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Code-based, version-controlled motion-graphics templates. The LLM only writes text/props; the animation is fixed and cannot break.",
+  "dependencies": {
+    "@remotion/cli": "4.0.500",
+    "remotion": "4.0.500",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

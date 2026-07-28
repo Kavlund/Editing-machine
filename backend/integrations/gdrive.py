@@ -286,6 +286,41 @@ def download_broll(client_name: str, dest_dir: Path, log=lambda m: None) -> int:
         return 0
 
 
+def download_file(file_id: str, dest_path: Path, log=lambda m: None) -> bool:
+    """Download a single Drive file by id to dest_path. Written to a .part file and
+    renamed atomically so a half-download never poses as a complete cache entry.
+    Returns True on success. Used by the Studio preview to stream a finished video
+    that lives only in Drive."""
+    if not config.gdrive_configured() or not file_id:
+        return False
+    try:
+        from googleapiclient.http import MediaIoBaseDownload
+        import io
+    except ImportError:
+        return False
+    tmp = dest_path.with_suffix(dest_path.suffix + ".part")
+    try:
+        svc = _service(log)
+        if svc is None:
+            return False
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        req = svc.files().get_media(fileId=file_id, supportsAllDrives=True)
+        with io.FileIO(str(tmp), "wb") as buf:
+            downloader = MediaIoBaseDownload(buf, req, chunksize=8 * 1024 * 1024)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+        tmp.replace(dest_path)
+        return True
+    except Exception as e:
+        log(f"gdrive: download_file {file_id} failed ({e})")
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+        return False
+
+
 _SOURCE_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mxf", ".webm", ".mts", ".m2ts"}
 
 

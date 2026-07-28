@@ -9,3 +9,11 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+
+# Remotion: node_modules and render artifacts are never committed (npm ci rebuilds
+# them in the image); keep src/, public/, package.json, package-lock.json.
+remotion/node_modules/
+remotion/out/
+remotion/.remotion/
+remotion/test_hook.mov
+remotion/remotion/

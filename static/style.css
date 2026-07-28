@@ -951,9 +951,10 @@ input[type="color"] {
 .job-name {
   font-size: .875rem;
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Show the full job name — wrap onto multiple lines and break long tokens
+     instead of truncating with an ellipsis ("Copy of Mo..."). */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .job-meta {

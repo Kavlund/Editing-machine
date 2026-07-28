@@ -333,6 +333,32 @@ def build_captions(edit, edl):
     frames.mkdir(parents=True)
 
     chunks, timed = build_caption_chunks(edit, edl)
+
+    # Studio caption-TEXT edits: replace a chunk's text where its original text
+    # matches an override 'from' (text-match is stable across the regenerate-from-
+    # transcript re-render, unlike a time index which drifts after a cut). An edited
+    # chunk drops karaoke word-sync (its words no longer map to transcript timings).
+    overrides = (edl.get("caption_overrides") or [])
+    edited_spans = []
+    if overrides:
+        omap = {re.sub(r"\s+"," ",str(o.get("from","")).strip().lower()): str(o.get("to","")).strip()
+                for o in overrides if isinstance(o, dict) and o.get("from")}
+        for ch in chunks:
+            key = re.sub(r"\s+"," ", ch[2].strip().lower())
+            if key in omap and omap[key]:
+                ch[2] = omap[key]
+                edited_spans.append((ch[0], ch[1]))
+        if omap:
+            print(f"captions: applied {len(omap)} text edit(s)")
+
+    # Persist the final chunks (text + output-time window) so the Studio editor can
+    # list and edit caption text. Copied to the volume at finalize.
+    try:
+        (edit/"captions.json").write_text(json.dumps(
+            [{"start": round(float(c[0]),2), "end": round(float(c[1]),2), "text": c[2]} for c in chunks],
+            ensure_ascii=False, indent=2))
+    except Exception:
+        pass
     print(f"captions: {len(chunks)} chunks (karaoke word-sync)")
 
     # weight only bites on VARIABLE fonts (Nunito/Oswald/Caveat) — static faces
@@ -349,10 +375,13 @@ def build_captions(edit, edl):
     # For each caption, attach its timed tokens and pre-render one image per
     # highlighted-word state (index -1 = none, 0..k-1 = that word in accent).
     EPS = 1e-3
+    edited_set = set(edited_spans)
     built = []
     for st, en, txt in chunks:
         toks = [tw for tw in timed if st - EPS <= tw["s"] < en - EPS]
-        if not toks:
+        # An edited chunk renders its NEW text as-is (no karaoke: its words no longer
+        # map to transcript timings). Same path as a chunk with no timed tokens.
+        if not toks or (st, en) in edited_set:
             crop, (ccx, ccy) = crop_to_content(
                 render_caption_image(_disp(txt), f_cap, cy, max_w, cap_color, hl_color))
             built.append((st, en, [], [(crop, ccx, ccy)]))
@@ -413,11 +442,26 @@ def build_hook(edit, edl):
     if not hook or not hook.get("text"):
         print("no hook -> skipping hook.mov"); return
 
-    text     = str(hook["text"]).upper()
     duration = max(2.0, float(hook.get("duration_sec", 6)))
-    _, fonts = load_style(edl)
+    out_dir = edit / "animations" / "hook"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    out_dir = edit / "animations" / "hook"; frames = out_dir / "frames"
+    # Prefer the code-based Remotion template (deterministic, version-controlled,
+    # cannot break); fall back to the PIL renderer if Remotion is off/unavailable
+    # or errors. Same output path + codec, so compose.py is unchanged either way.
+    if os.environ.get("REMOTION_GRAPHICS") == "1":
+        try:
+            import remotion_render as _rr
+            if _rr.available():
+                _rr.render_hook(str(hook["text"]), out_dir / "hook.mov", W, H, duration, fps=FPS)
+                print("hook.mov via Remotion"); return
+            print("Remotion graphics on but project not built — using PIL hook", file=sys.stderr)
+        except Exception as e:
+            print(f"Remotion hook failed ({e}) — using PIL hook", file=sys.stderr)
+
+    text     = str(hook["text"]).upper()
+    _, fonts = load_style(edl)
+    frames = out_dir / "frames"
     if frames.exists(): shutil.rmtree(frames)
     frames.mkdir(parents=True)
 
@@ -444,6 +488,49 @@ def build_hook(edit, edl):
     print(f"hook.mov: {n} frames ({duration:.1f}s), '{text}'")
 
 
+def build_graphics(edit, edl):
+    """Render each Remotion graphic in edl['graphics'] to animations/graphics/g{i}.mov.
+
+    A no-op unless REMOTION_GRAPHICS=1 AND the node project is built — compose.py
+    then overlays only the files that exist, so a disabled or failed graphic simply
+    does not appear (never breaks the render)."""
+    graphics = edl.get("graphics") or []
+    if not graphics:
+        return
+    if os.environ.get("REMOTION_GRAPHICS") != "1":
+        print("graphics: REMOTION_GRAPHICS off -> skipping"); return
+    try:
+        import remotion_render as _rr
+    except Exception as e:
+        print(f"graphics: remotion_render import failed ({e}) -> skipping", file=sys.stderr); return
+    if not _rr.available():
+        print("graphics: remotion project not built -> skipping", file=sys.stderr); return
+
+    out_dir = edit / "animations" / "graphics"
+    if out_dir.exists(): shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    brand  = edl.get("brand", {})
+    accent = brand.get("accent_color") or "#ffffff"
+    for i, g in enumerate(graphics):
+        tmpl = g.get("template")
+        if not tmpl:
+            continue
+        # Honor the pipeline's already-fit duration (it clamps to the remaining
+        # video); only guard the hard bounds so a near-end card's outro isn't cut.
+        dur   = max(1.0, min(8.0, float(g.get("duration_sec", 3.0))))
+        props = dict(g.get("props") or {})
+        props.update({
+            "durationInFrames": max(30, int(round(dur * FPS))),
+            "width":  W, "height": H,
+            "accent": props.get("accent") or accent,
+        })
+        try:
+            _rr.render_template(tmpl, out_dir / f"g{i}.mov", props)
+            print(f"graphics: rendered g{i} ({tmpl})")
+        except Exception as e:
+            print(f"graphics: g{i} ({tmpl}) failed ({e}) -> skipping", file=sys.stderr)
+
+
 def main():
     edit = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
     which = sys.argv[2] if len(sys.argv) > 2 else "all"
@@ -458,6 +545,7 @@ def main():
     if which in ("all", "title"):    build_title(edit, edl)
     if which in ("all", "captions"): build_captions(edit, edl)
     if which in ("all", "hook"):     build_hook(edit, edl)
+    if which in ("all", "graphics"): build_graphics(edit, edl)
 
 
 if __name__ == "__main__":

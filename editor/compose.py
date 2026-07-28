@@ -178,11 +178,16 @@ def overlay(edit, edl, base, out, starts, durs):
     # exactly its length (a video just plays its own frames).
     bwin = []
     for b in broll:
-        seg_i = min(range(len(edl_off)), key=lambda k: abs(edl_off[k]-b["start_in_output"]))
-        span  = int(b.get("span", 1))
-        s = starts[seg_i] + float(b.get("delay", 0.0))
         clip_dur = float(b.get("duration", 0))
-        e = s + clip_dur + OVL if clip_dur > 0 else starts[seg_i] + sum(durs[seg_i:seg_i+span]) + OVL
+        if "at_sec" in b:
+            # Studio move: absolute placement at the dropped time (like graphics).
+            s = max(0.0, float(b["at_sec"]))
+            e = s + (clip_dur if clip_dur > 0 else 2.5) + OVL
+        else:
+            seg_i = min(range(len(edl_off)), key=lambda k: abs(edl_off[k]-b["start_in_output"]))
+            span  = int(b.get("span", 1))
+            s = starts[seg_i] + float(b.get("delay", 0.0))
+            e = s + clip_dur + OVL if clip_dur > 0 else starts[seg_i] + sum(durs[seg_i:seg_i+span]) + OVL
         is_img = Path(str(b["file"])).suffix.lower() in _IMG
         bwin.append((b, s, e, is_img))
         p = str(edit/b["file"])
@@ -191,11 +196,31 @@ def overlay(edit, edl, base, out, starts, durs):
         else:
             inputs += ["-i", p]
 
+    # Remotion graphic overlays (cards / stats / lower-thirds): each is a transparent
+    # clip placed at its own start_sec for its own length. Composited ABOVE b-roll,
+    # BELOW hook/title/captions. Only files that actually rendered are included.
+    gidx0 = bidx0 + len(bwin)
+    gdir  = edit/"animations/graphics"
+    gwin  = []
+    for gi, g in enumerate(edl.get("graphics") or []):
+        gp = gdir/f"g{gi}.mov"
+        if not gp.exists():
+            continue
+        gd = probe_dur(gp)
+        if gd <= 0:
+            continue
+        gs  = max(0.0, float(g.get("start_sec", 0.0)))
+        idx = gidx0 + len(gwin)
+        gwin.append((idx, gs, gs + gd))
+        inputs += ["-i", str(gp)]
+
     parts = ["[0:v]format=yuv420p[v0]"]
     # Hook is placed at its start_sec by shifting PTS; shown only for its own length
     if has_hook:  parts.append(f"[{hi}:v]setpts=PTS-STARTPTS+{hook_start}/TB[h1]")
     if has_title: parts.append(f"[{ti}:v]setpts=PTS-STARTPTS[t1]")
     if has_caps:  parts.append(f"[{ci}:v]setpts=PTS-STARTPTS[c1]")
+    for j, (idx, gs, ge) in enumerate(gwin):
+        parts.append(f"[{idx}:v]setpts=PTS-STARTPTS+{gs:.3f}/TB[g{j}]")
 
     cur = "[v0]"
     for i, (b, s, e, is_img) in enumerate(bwin):
@@ -223,6 +248,10 @@ def overlay(edit, edl, base, out, starts, durs):
             ov = f"overlay=enable='between(t,{s:.3f},{e:.3f})'"
         nl = f"[bo{i}]"
         parts.append(f"{cur}[b{i}]{ov}{nl}")
+        cur = nl
+    for j, (idx, gs, ge) in enumerate(gwin):
+        nl = f"[go{j}]"
+        parts.append(f"{cur}[g{j}]overlay=enable='between(t,{gs:.3f},{ge:.3f})'{nl}")
         cur = nl
     if has_hook:
         he = hook_start + hook_dur

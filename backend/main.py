@@ -190,6 +190,11 @@ def setup_page():
     return _render_page("setup.html")
 
 
+@app.get("/studio.html")
+def studio_page():
+    return _render_page("studio.html")
+
+
 @app.get("/api/brand")
 def brand_info():
     return {"name": BRAND_NAME, "logo": BRAND_LOGO}
@@ -1214,6 +1219,76 @@ def download_output(job_id: str):
     raise HTTPException(404, "Finished video not found. It may still be delivering to Drive.")
 
 
+# ── Studio preview: stream a Drive-delivered video through the app so it plays
+#    INLINE in the editor. Cached on the volume (bounded) so seeking is native and
+#    repeat opens are instant. This is what makes caption dragging WYSIWYG.
+PREVIEW_CACHE = DATA_ROOT / "preview_cache"
+_PREVIEW_CAP  = 1_500_000_000   # ~1.5 GB across all cached previews
+
+
+def _extract_drive_id(link: str):
+    if not link:
+        return None
+    m = re.search(r"/d/([A-Za-z0-9_-]{20,})", link) or re.search(r"[?&]id=([A-Za-z0-9_-]{20,})", link)
+    return m.group(1) if m else None
+
+
+def _trim_preview_cache(keep: Path = None):
+    """Evict the oldest cached previews once the cache exceeds the cap."""
+    try:
+        files = sorted(PREVIEW_CACHE.glob("*.mp4"), key=lambda p: p.stat().st_mtime)
+        total = sum(p.stat().st_size for p in files)
+        for p in files:
+            if total <= _PREVIEW_CAP:
+                break
+            if keep and p == keep:
+                continue
+            try:
+                sz = p.stat().st_size; p.unlink(); total -= sz
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+@app.get("/api/jobs/{job_id}/preview")
+def preview_video(job_id: str, nocaptions: int = 0):
+    """Playable, seekable video for the Studio editor. Serves the local copy if one
+    exists, else fetches the finished video from Drive into a bounded on-disk cache
+    and serves that (FileResponse honours Range requests, so scrubbing works).
+    nocaptions=1 serves the caption-free proxy (on the volume) for clean caption drag."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Job not found")
+    job = json.loads(path.read_text())
+    if nocaptions:
+        proxy = UPLOADS_DIR / job_id / "proxy.mp4"
+        if proxy.exists():
+            return FileResponse(str(proxy), media_type="video/mp4")
+        raise HTTPException(404, "No caption-free proxy for this job")
+    out = job.get("output_path") or ""
+    if out and Path(out).exists():
+        return FileResponse(out, media_type="video/mp4")
+    fid = _extract_drive_id(job.get("drive_link"))
+    if not fid:
+        raise HTTPException(404, "No video available to preview yet")
+    PREVIEW_CACHE.mkdir(parents=True, exist_ok=True)
+    cached = PREVIEW_CACHE / f"{job_id}.mp4"
+    if cached.exists() and cached.stat().st_size > 0:
+        try:
+            os.utime(cached, None)   # touch -> most-recently-used, survives eviction
+        except Exception:
+            pass
+    else:
+        _trim_preview_cache()
+        from integrations import gdrive as _gd
+        ok = _gd.download_file(fid, cached, log=lambda m: print(f"[preview] {m}", flush=True))
+        if not ok or not cached.exists() or cached.stat().st_size == 0:
+            raise HTTPException(502, "Could not fetch the video from Drive for preview")
+    _trim_preview_cache(keep=cached)
+    return FileResponse(str(cached), media_type="video/mp4")
+
+
 # ── Zoom timeline (drag-and-drop punch-in markers) ─────────────────────────
 
 @app.get("/api/jobs/{job_id}/zooms")
@@ -1272,6 +1347,129 @@ async def set_job_zooms(job_id: str, request: Request):
             "zoom_strength": round(sum(z["strength"] for z in clean) / len(clean), 3),
         })
     return {"ok": True, "zooms": clean, "rerendering": True}
+
+
+# ── Studio (in-app editor) ──────────────────────────────────────────────────
+
+@app.get("/api/jobs/{job_id}/studio")
+def get_studio(job_id: str):
+    """Everything the Studio editor needs to open a finished job: the edit
+    decision list (persisted on the volume after render), the video URL, and the
+    edits already applied so the UI opens in the current state."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Job not found")
+    job = json.loads(path.read_text())
+    edl = None
+    edl_path = UPLOADS_DIR / job_id / "edl.json"
+    if edl_path.exists():
+        try:
+            edl = json.loads(edl_path.read_text())
+            edl.pop("sources", None)   # absolute scratch paths — not needed by the UI
+        except Exception:
+            edl = None
+    out = job.get("output_path") or ""
+    captions = []
+    cap_path = UPLOADS_DIR / job_id / "captions.json"
+    if cap_path.exists():
+        try:
+            captions = json.loads(cap_path.read_text())
+        except Exception:
+            captions = []
+    has_proxy = (UPLOADS_DIR / job_id / "proxy.mp4").exists()
+    return {
+        "status":       job.get("status", ""),
+        "client_name":  job.get("client_name", ""),
+        "folder_name":  job.get("folder_name", ""),
+        "duration":     float(job.get("output_duration") or 0.0),
+        "video_url":    f"/api/jobs/{job_id}/preview",   # streamed + seekable inline
+        "proxy_url":    f"/api/jobs/{job_id}/preview?nocaptions=1" if has_proxy else "",
+        "drive_link":   job.get("drive_link") or "",     # fallback if streaming fails
+        "has_video":    bool(out and Path(out).exists()) or bool(job.get("drive_link")),
+        "edl":          edl,
+        "captions":     captions,   # [{start,end,text}] — editable in the Studio
+        "overrides":    job.get("job_overrides", {}),
+        "cut_spans":    job.get("cut_spans", []),
+        "caption_text_overrides": job.get("caption_text_overrides", []),
+        "graphics_override":      job.get("graphics_override"),
+        "broll_override":         job.get("broll_override"),
+        "zooms":        job.get("zoom_add") if job.get("zoom_manual") else job.get("zoom_last", []),
+    }
+
+
+@app.post("/api/jobs/{job_id}/studio")
+async def save_studio(job_id: str, request: Request):
+    """Persist Studio edits (caption look, cuts, zooms) and re-render. Caption and
+    cut edits ride the same override machinery the pipeline already applies, so
+    they survive the regenerate-from-transcript re-render."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Job not found")
+    job  = json.loads(path.read_text())
+    body = await request.json()
+
+    # Caption look + grade -> job_overrides
+    cap = body.get("caption") or {}
+    ov  = job.setdefault("job_overrides", {})
+    for k in ("caption_y", "caption_position", "caption_font_size", "caption_color",
+              "highlight_color", "caption_max_width", "caption_font", "caption_uppercase"):
+        if k in cap:
+            ov[k] = cap[k]
+    if "grade" in body:
+        ov["grade"] = body["grade"]
+
+    # Caption TEXT edits -> [{from, to}] matched by original text at render
+    if isinstance(body.get("caption_text_overrides"), list):
+        edits = []
+        for e in body["caption_text_overrides"]:
+            if isinstance(e, dict) and str(e.get("from", "")).strip() and str(e.get("to", "")).strip():
+                edits.append({"from": str(e["from"]).strip(), "to": str(e["to"]).strip()})
+        job["caption_text_overrides"] = edits
+
+    # Graphics / b-roll timeline moves -> full override lists honoured by the render
+    if isinstance(body.get("graphics_override"), list):
+        job["graphics_override"] = body["graphics_override"]
+    if isinstance(body.get("broll_override"), list):
+        job["broll_override"] = body["broll_override"]
+
+    # Cuts -> source-time spans (stable across re-renders)
+    if isinstance(body.get("cut_spans"), list):
+        cuts = []
+        for c in body["cut_spans"]:
+            if not isinstance(c, dict) or not c.get("source"):
+                continue
+            try:
+                s, e = float(c["start"]), float(c["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if e > s:
+                cuts.append({"source": str(c["source"]), "start": round(s, 3), "end": round(e, 3)})
+        job["cut_spans"] = cuts
+
+    # Zooms -> same manual-timeline path the zoom editor uses
+    if isinstance(body.get("zooms"), list):
+        dur_total = float(job.get("output_duration") or 0.0)
+        clean = []
+        for m in body["zooms"]:
+            try:
+                at = round(float(m.get("at")), 2)
+            except (TypeError, ValueError):
+                continue
+            if at < 0 or (dur_total and at > dur_total + 0.5):
+                continue
+            clean.append({"at": at,
+                          "duration": max(0.8, min(6.0, float(m.get("duration", 2.5) or 2.5))),
+                          "strength": max(0.06, min(0.30, float(m.get("strength", 0.12) or 0.12)))})
+        clean.sort(key=lambda e: e["at"])
+        job["zoom_add"] = clean
+        job["zoom_remove"] = []
+        job["zoom_manual"] = True
+
+    if body.get("rerender", True):
+        _rerender_job(job, job_id)
+        return {"ok": True, "rerendering": True}
+    path.write_text(json.dumps(job, indent=2))
+    return {"ok": True, "rerendering": False}
 
 
 # ── Health ────────────────────────────────────────────────────────────────

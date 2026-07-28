@@ -1041,6 +1041,9 @@ function renderJobs(jobs) {
         ? `<button class="btn btn-sm btn-stop" onclick="stopJob('${j.id}')">Stop</button>`
         : '',
       isDone
+        ? `<a class="btn btn-sm btn-chat" href="/studio.html?job=${j.id}" title="Fine-tune this video: move captions, cut bits, adjust zooms">Open editor</a>`
+        : '',
+      isDone
         ? `<button class="btn btn-sm btn-outline" onclick="runPipeline('${j.id}')">Re-render</button>`
         : '',
       // Fail-safe: once a video has rendered successfully it stays reachable,
