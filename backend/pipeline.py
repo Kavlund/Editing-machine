@@ -2145,6 +2145,47 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             except Exception as _e:
                 _log(job_path, f"B-roll trims skipped ({_e})")
 
+        # Materialize any b-roll file not yet staged, so a clip the operator ADDED from
+        # Drive in the editor renders even when the auto b-roll path was skipped (its file
+        # was never pulled). Copy from the Drive pull / local library, else fetch by
+        # drive_id, else drop the entry so compose never fails opening a missing file.
+        try:
+            _bdir = project_dir / "broll"; _bdir.mkdir(exist_ok=True)
+            _lib = BASE_DIR / "broll_library" / job.get("client_id", "")
+            _bsrc = project_dir / "broll_src"
+            _dm = json.loads((project_dir / "edl.json").read_text())
+            _entries = _dm.get("broll", [])
+            _kept = []
+            for _en in _entries:
+                _nm = Path(str(_en.get("file", ""))).name
+                if not _nm:
+                    continue
+                _dest = _bdir / _nm
+                if _dest.exists() and _dest.stat().st_size > 0:
+                    _kept.append(_en); continue
+                _ok = False
+                for _cand in (_bsrc / _nm, _lib / _nm):
+                    if _cand.exists():
+                        try:
+                            shutil.copy2(_cand, _dest); _ok = True; break
+                        except Exception:
+                            pass
+                if not _ok and _en.get("drive_id"):
+                    try:
+                        from integrations import gdrive as _gd
+                        _ok = bool(_gd.download_file(_en["drive_id"], _dest))
+                    except Exception:
+                        _ok = False
+                if _ok:
+                    _kept.append(_en)
+                else:
+                    _log(job_path, f"B-roll: added clip '{_nm}' unavailable — skipping")
+            if len(_kept) != len(_entries):
+                _dm["broll"] = _kept
+                (project_dir / "edl.json").write_text(json.dumps(_dm, indent=2))
+        except Exception as _e:
+            _log(job_path, f"B-roll materialize skipped ({_e})")
+
         # ── 6. Compose ─────────────────────────────────────────────────────────
         _log(job_path, "Rendering — normalize → concat → overlays → loudnorm (this takes a while)...")
         _run("compose.py", str(project_dir))

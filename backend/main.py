@@ -385,6 +385,56 @@ def list_broll(client_id: str):
         for f in files
     ]
 
+
+@app.get("/api/jobs/{job_id}/broll-library")
+def broll_library(job_id: str):
+    """B-roll clips the operator can ADD to this job from the editor: the client's local
+    uploads + their Drive B-roll folder. {available, clips:[{name,source,drive_id,is_image,description}]}."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Job not found")
+    job = json.loads(path.read_text())
+    cid, cname = job.get("client_id", ""), job.get("client_name", "")
+    from pipeline import read_broll_tags
+    _imgs = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif")
+    local_folder = _client_broll_dir(cid)
+    local_files = [f for f in sorted(local_folder.iterdir())
+                   if f.is_file() and f.suffix.lower() in BROLL_EXTS] if local_folder.exists() else []
+    local_tags = read_broll_tags(local_folder, local_files) if local_files else {}
+    clips, seen = [], set()
+    for f in local_files:
+        seen.add(f.name)
+        clips.append({"name": f.name, "source": "upload", "drive_id": "",
+                      "is_image": f.suffix.lower() in _imgs,
+                      "description": (local_tags.get(f.name) or {}).get("description", "")})
+    available = bool(local_files)
+    try:
+        from integrations import config as _icfg, gdrive as _gdrive
+        if _icfg.gdrive_configured():
+            available = True
+            cache = {}
+            cp = local_folder / ".tags.json"
+            if cp.exists():
+                try:
+                    cache = json.loads(cp.read_text())
+                except Exception:
+                    cache = {}
+            for f in _gdrive.list_broll(cname):
+                nm = f.get("name", "")
+                if not nm or nm in seen:
+                    continue
+                seen.add(nm)
+                desc = ""
+                mt = _gdrive._rfc3339_to_epoch(f.get("modifiedTime"))
+                if mt and f.get("size"):
+                    desc = (cache.get(f"{nm}:{f.get('size')}:{int(mt)}") or {}).get("description", "")
+                clips.append({"name": nm, "source": "drive", "drive_id": f.get("id", ""),
+                              "is_image": Path(nm).suffix.lower() in _imgs, "description": desc})
+    except Exception:
+        pass
+    return {"available": available, "clips": clips}
+
+
 @app.post("/api/clients/{client_id}/broll")
 async def upload_broll(client_id: str, file: UploadFile = File(...)):
     folder = _client_broll_dir(client_id)
