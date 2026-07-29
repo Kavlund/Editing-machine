@@ -71,7 +71,9 @@ def font(spec, size, weight=None):
             raise
     if weight:
         try:
-            f.set_variation_by_axes([weight])
+            # clamp so an out-of-range value never raises; single 'wght' axis on
+            # our variable faces (Nunito/Oswald/Caveat). Static faces just ignore it.
+            f.set_variation_by_axes([int(max(100, min(900, int(weight))))])
         except Exception:
             pass  # a static font, or no variable-font support — use it as-is
     return f
@@ -339,17 +341,31 @@ def build_captions(edit, edl):
     # transcript re-render, unlike a time index which drifts after a cut). An edited
     # chunk drops karaoke word-sync (its words no longer map to transcript timings).
     overrides = (edl.get("caption_overrides") or [])
+    color_overrides = (edl.get("caption_color_overrides") or [])
     edited_spans = []
-    if overrides:
-        omap = {re.sub(r"\s+"," ",str(o.get("from","")).strip().lower()): str(o.get("to","")).strip()
-                for o in overrides if isinstance(o, dict) and o.get("from")}
+    chunk_color = {}          # (st,en) -> rgba for a caption given its own colour
+    _ck = lambda t: re.sub(r"\s+", " ", str(t).strip().lower())
+    omap = {_ck(o.get("from","")): str(o.get("to","")).strip()
+            for o in overrides if isinstance(o, dict) and o.get("from")}
+    cmap = {_ck(o.get("from","")): o.get("color")
+            for o in color_overrides if isinstance(o, dict) and o.get("from") and o.get("color")}
+    if omap or cmap:
+        # Match on the chunk's ORIGINAL text BEFORE any text edit rewrites ch[2],
+        # so per-caption text and colour both key off the same stable original text.
         for ch in chunks:
-            key = re.sub(r"\s+"," ", ch[2].strip().lower())
+            key = _ck(ch[2])
+            if key in cmap:
+                try:
+                    chunk_color[(ch[0], ch[1])] = hex_to_rgba(cmap[key])
+                except Exception:
+                    pass
             if key in omap and omap[key]:
                 ch[2] = omap[key]
                 edited_spans.append((ch[0], ch[1]))
         if omap:
             print(f"captions: applied {len(omap)} text edit(s)")
+        if cmap:
+            print(f"captions: applied {len(cmap)} colour edit(s)")
 
     # Persist the final chunks (text + output-time window) so the Studio editor can
     # list and edit caption text. Copied to the volume at finalize.
@@ -378,19 +394,20 @@ def build_captions(edit, edl):
     edited_set = set(edited_spans)
     built = []
     for st, en, txt in chunks:
+        this_color = chunk_color.get((st, en), cap_color)   # per-caption colour or global
         toks = [tw for tw in timed if st - EPS <= tw["s"] < en - EPS]
         # An edited chunk renders its NEW text as-is (no karaoke: its words no longer
         # map to transcript timings). Same path as a chunk with no timed tokens.
         if not toks or (st, en) in edited_set:
             crop, (ccx, ccy) = crop_to_content(
-                render_caption_image(_disp(txt), f_cap, cy, max_w, cap_color, hl_color))
+                render_caption_image(_disp(txt), f_cap, cy, max_w, this_color, hl_color))
             built.append((st, en, [], [(crop, ccx, ccy)]))
             continue
         line_text = _disp(" ".join(t["t"] for t in toks))
         variants = []
         for active in range(-1, len(toks)):
             crop, (ccx, ccy) = crop_to_content(
-                render_caption_image(line_text, f_cap, cy, max_w, cap_color, hl_color,
+                render_caption_image(line_text, f_cap, cy, max_w, this_color, hl_color,
                                      active_index=(active if active >= 0 else None)))
             variants.append((crop, ccx, ccy))
         built.append((st, en, toks, variants))

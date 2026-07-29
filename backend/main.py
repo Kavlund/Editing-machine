@@ -1400,6 +1400,38 @@ async def set_job_zooms(job_id: str, request: Request):
 
 # ── Studio (in-app editor) ──────────────────────────────────────────────────
 
+def _norm_hex(v):
+    """Normalize a color to #rrggbb (accept #rgb / #rrggbb, with or without #), else None."""
+    if not isinstance(v, str):
+        return None
+    m = re.fullmatch(r"#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})", v.strip())
+    if not m:
+        return None
+    h = m.group(1).lower()
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    return "#" + h
+
+
+def _brand_colors_for_job(job: dict) -> list:
+    """The client's brand colors (accent, primary, caption) as default editor swatches."""
+    cs = job.get("client_snapshot") or {}
+    if not cs and job.get("client_id"):
+        try:
+            cs = get_client(job["client_id"]) or {}
+        except Exception:
+            cs = {}
+    brand   = cs.get("brand") or {}
+    editing = cs.get("editing") or {}
+    out, seen = [], set()
+    for v in (brand.get("accent_color"), brand.get("primary_color"), editing.get("caption_color")):
+        h = _norm_hex(v)
+        if h and h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out
+
+
 @app.get("/api/jobs/{job_id}/studio")
 def get_studio(job_id: str):
     """Everything the Studio editor needs to open a finished job: the edit
@@ -1439,7 +1471,10 @@ def get_studio(job_id: str):
         "captions":     captions,   # [{start,end,text}] — editable in the Studio
         "overrides":    job.get("job_overrides", {}),
         "cut_spans":    job.get("cut_spans", []),
+        "split_points": job.get("split_points", []),
         "caption_text_overrides": job.get("caption_text_overrides", []),
+        "caption_color_overrides": job.get("caption_color_overrides", []),
+        "brand_colors":  _brand_colors_for_job(job),   # default swatches from client onboarding
         "graphics_override":      job.get("graphics_override"),
         "broll_override":         job.get("broll_override"),
         "zooms":        job.get("zoom_add") if job.get("zoom_manual") else job.get("zoom_last", []),
@@ -1461,9 +1496,15 @@ async def save_studio(job_id: str, request: Request):
     cap = body.get("caption") or {}
     ov  = job.setdefault("job_overrides", {})
     for k in ("caption_y", "caption_position", "caption_font_size", "caption_color",
-              "highlight_color", "caption_max_width", "caption_font", "caption_uppercase"):
+              "highlight_color", "caption_max_width", "caption_font", "caption_uppercase",
+              "caption_weight"):
         if k in cap:
-            ov[k] = cap[k]
+            if k in ("caption_color", "highlight_color"):
+                nh = _norm_hex(cap[k])          # never let a bad hex reach the renderer
+                if nh:
+                    ov[k] = nh
+            else:
+                ov[k] = cap[k]
     if "grade" in body:
         ov["grade"] = body["grade"]
 
@@ -1474,6 +1515,18 @@ async def save_studio(job_id: str, request: Request):
             if isinstance(e, dict) and str(e.get("from", "")).strip() and str(e.get("to", "")).strip():
                 edits.append({"from": str(e["from"]).strip(), "to": str(e["to"]).strip()})
         job["caption_text_overrides"] = edits
+
+    # Per-caption COLOR -> [{from, color}] matched by original text at render
+    if isinstance(body.get("caption_color_overrides"), list):
+        cc = []
+        for e in body["caption_color_overrides"]:
+            if not isinstance(e, dict):
+                continue
+            frm = str(e.get("from", "")).strip()
+            col = _norm_hex(e.get("color"))
+            if frm and col:
+                cc.append({"from": frm, "color": col})
+        job["caption_color_overrides"] = cc
 
     # Graphics / b-roll timeline moves -> full override lists honoured by the render
     if isinstance(body.get("graphics_override"), list):
@@ -1494,6 +1547,20 @@ async def save_studio(job_id: str, request: Request):
             if e > s:
                 cuts.append({"source": str(c["source"]), "start": round(s, 3), "end": round(e, 3)})
         job["cut_spans"] = cuts
+
+    # Splits -> source-time cut POINTS (stable across re-renders, non-destructive)
+    if isinstance(body.get("split_points"), list):
+        pts = []
+        for p in body["split_points"]:
+            if not isinstance(p, dict) or not p.get("source"):
+                continue
+            try:
+                at = float(p["at"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if at >= 0:
+                pts.append({"source": str(p["source"]), "at": round(at, 3)})
+        job["split_points"] = pts
 
     # Zooms -> same manual-timeline path the zoom editor uses
     if isinstance(body.get("zooms"), list):
@@ -2234,6 +2301,12 @@ def _rerender_job(job: dict, job_id: str):
     job["status"] = "normalizing"
     job["log"]    = []
     job_path.write_text(json.dumps(job, indent=2))
+    # Bust the cached preview so the editor re-fetches the freshly re-rendered video
+    # instead of serving the stale pre-edit copy.
+    try:
+        (PREVIEW_CACHE / f"{job_id}.mp4").unlink(missing_ok=True)
+    except Exception:
+        pass
     pending = getattr(_render_defer, "jobs", None)
     if pending is not None:
         pending.add(job_id)      # flushed once, after the whole chat turn

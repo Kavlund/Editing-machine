@@ -765,6 +765,38 @@ def _apply_cut_spans(ranges: list, cut_spans: list, min_dur: float = 0.3) -> lis
     return out
 
 
+def _apply_splits(ranges: list, split_points: list) -> list:
+    """Divide EDL ranges at SOURCE-time split points (Studio 'split clip').
+
+    Non-destructive: a split point strictly inside a range breaks it into two
+    abutting halves; no footage is removed and no half is dropped. A point at or
+    outside a range's edges is a silent no-op. Source coords stay stable across
+    re-renders, exactly like cut_spans."""
+    if not split_points:
+        return ranges
+    out = []
+    for r in ranges:
+        segs = [(float(r["start"]), float(r["end"]))]
+        for sp in split_points:
+            if not isinstance(sp, dict) or sp.get("source") != r.get("source"):
+                continue
+            try:
+                at = float(sp["at"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            nxt = []
+            for s, e in segs:
+                if s < at < e:
+                    nxt.append((s, at)); nxt.append((at, e))   # abutting halves
+                else:
+                    nxt.append((s, e))
+            segs = nxt
+        for s, e in segs:
+            nr = dict(r); nr["start"] = round(s, 3); nr["end"] = round(e, 3)
+            out.append(nr)
+    return out
+
+
 def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
                 anthropic_key: str, log_fn, desired_count: int | None = None,
                 force_cards: bool = False) -> list:
@@ -1512,7 +1544,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             caps = edl.setdefault("style", {}).setdefault("captions", {})
             for ok, ek in [("caption_y","y"),("caption_font_size","font_size"),
                            ("caption_color","color"),("highlight_color","highlight_color"),
-                           ("caption_max_width","max_width")]:
+                           ("caption_max_width","max_width"),("caption_weight","weight")]:
                 if ok in overrides:
                     caps[ek] = overrides[ok]
             _oh = int(edl.get("height", 1920))
@@ -1531,6 +1563,15 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 else:                                       _fonts["caption"] = _font("caption")
             _log(job_path, f"Job overrides applied: {list(overrides.keys())}")
 
+        # Studio "split a clip" edits: divide ranges at SOURCE-time points FIRST, so a
+        # subsequent per-piece trim/cut is scoped to the intended half. Non-destructive.
+        split_points = job.get("split_points") or []
+        if split_points:
+            before = len(edl["ranges"])
+            edl["ranges"] = _apply_splits(edl["ranges"], split_points)
+            _log(job_path, f"Studio: {len(split_points)} split(s) applied "
+                           f"({before} → {len(edl['ranges'])} ranges)")
+
         # Studio "cut a bit out" edits: remove SOURCE-time spans from the ranges.
         # Source time is stable across re-renders, so a cut survives regeneration.
         cut_spans = job.get("cut_spans") or []
@@ -1545,6 +1586,10 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         if job.get("caption_text_overrides"):
             edl["caption_overrides"] = job["caption_text_overrides"]
             _log(job_path, f"Studio: {len(job['caption_text_overrides'])} caption text edit(s)")
+        # Studio per-caption COLOR edits: matched by original text, same as text edits.
+        if job.get("caption_color_overrides"):
+            edl["caption_color_overrides"] = job["caption_color_overrides"]
+            _log(job_path, f"Studio: {len(job['caption_color_overrides'])} caption color edit(s)")
 
         (project_dir / "edl.json").write_text(json.dumps(edl, indent=2))
         _log(job_path, f"EDL: {len(edl['ranges'])} ranges, {sum(r['end']-r['start'] for r in edl['ranges']):.1f}s raw")

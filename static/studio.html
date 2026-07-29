@@ -75,10 +75,20 @@
   .range::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:#fff;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.5)}
   .val{font-family:var(--mono);font-size:12px;color:var(--text);width:46px;text-align:right;font-variant-numeric:tabular-nums}
   .swatches{display:flex;gap:7px;flex-wrap:wrap}.sw{width:24px;height:24px;border-radius:7px;cursor:pointer;border:2px solid transparent;transition:.12s}.sw:hover{transform:translateY(-1px)}.sw.on{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.2)}
+  .swatches.brand{margin-bottom:3px}.swatches.brand:empty{display:none}
+  .colorctl{display:flex;align-items:center;gap:7px;margin-top:7px}
+  .sw.custom{border:2px solid rgba(255,255,255,.3)}
+  .pick{width:30px;height:26px;padding:0;border:1px solid var(--border);border-radius:7px;background:transparent;cursor:pointer}
+  .pick::-webkit-color-swatch-wrapper{padding:2px}.pick::-webkit-color-swatch{border:none;border-radius:5px}
+  .hexin{width:84px;height:26px;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:7px;color:#e8eaf0;font-family:var(--mono,ui-monospace,monospace);font-size:12px;padding:0 8px}
+  .hexin:focus{outline:none;border-color:var(--indigo)}
   .toggle{margin-left:auto;width:40px;height:22px;border-radius:12px;background:rgba(255,255,255,.12);position:relative;cursor:pointer;transition:.15s;flex:none}.toggle.on{background:var(--indigo)}.toggle::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.15s}.toggle.on::after{left:20px}
   .divide{height:1px;background:var(--border)}
   .selinfo{font-size:12.5px;color:var(--muted)}.selinfo b{color:var(--text)}
   .clip-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.clip-actions .btn{justify-content:center;font-size:12.5px}
+  .triml{display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap}
+  .numin{width:52px;height:26px;background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:7px;color:#e8eaf0;font-size:12.5px;padding:0 6px}
+  .triml .btn{padding:5px 11px;font-size:12px}
   .btn.danger{border-color:rgba(251,113,133,.4);color:var(--danger)}.btn.danger:hover{background:rgba(251,113,133,.1)}
   .muted-note{font-size:12px;color:var(--dim)}
   textarea.capedit{width:100%;background:var(--raised);border:1px solid var(--border-2);border-radius:9px;color:var(--text);font:inherit;font-size:13px;padding:9px 11px;resize:vertical;min-height:60px}
@@ -125,6 +135,7 @@
     <a class="mark" href="/" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/></svg></a>
     <div class="crumb"><b>__BRAND_NAME__</b><span class="sep">›</span><span id="client">…</span><span class="sep">›</span><span class="job" id="jobname">Loading…</span></div>
     <div class="spacer"></div>
+    <button class="btn ghost" id="undo" title="Undo (⌘Z)" aria-label="Undo last change" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>Undo</button>
     <a class="btn ghost" href="/">Back</a>
     <button class="btn primary" id="save" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg>Save &amp; re-render</button>
   </div>
@@ -167,12 +178,17 @@
               <div class="row"><span class="k">Line width</span><div class="seg" id="widthSeg" style="flex:1"><button data-w="narrow">Narrow</button><button data-w="medium">Medium</button><button data-w="wide">Wide</button></div></div>
             </div>
             <div class="grp"><span class="lab">Text colour</span>
-              <div class="swatches" data-target="text"><span class="sw" data-c="#ffffff" style="background:#fff"></span><span class="sw" data-c="#fbbf24" style="background:#fbbf24"></span><span class="sw" data-c="#34d399" style="background:#34d399"></span><span class="sw" data-c="#111827" style="background:#111827;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)"></span></div>
-              <span class="lab" style="margin-top:4px">Word highlight</span>
-              <div class="swatches" data-target="hl"><span class="sw" data-c="#ffffff" style="background:#fff"></span><span class="sw" data-c="#fbbf24" style="background:#fbbf24"></span><span class="sw" data-c="#f472b6" style="background:#f472b6"></span><span class="sw" data-c="#46c8ff" style="background:#46c8ff"></span></div>
+              <div class="swatches brand" data-target="text"></div>
+              <div class="swatches" data-target="text"><span class="sw" data-c="#ffffff" style="background:#fff"></span><span class="sw" data-c="#000000" style="background:#000;box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)"></span><span class="sw" data-c="#fbbf24" style="background:#fbbf24"></span><span class="sw" data-c="#f59e0b" style="background:#f59e0b"></span><span class="sw" data-c="#ef4444" style="background:#ef4444"></span><span class="sw" data-c="#f472b6" style="background:#f472b6"></span><span class="sw" data-c="#a855f7" style="background:#a855f7"></span><span class="sw" data-c="#6366f1" style="background:#6366f1"></span><span class="sw" data-c="#3b82f6" style="background:#3b82f6"></span><span class="sw" data-c="#46c8ff" style="background:#46c8ff"></span><span class="sw" data-c="#34d399" style="background:#34d399"></span><span class="sw" data-c="#84cc16" style="background:#84cc16"></span></div>
+              <div class="colorctl"><span class="sw custom" data-target="text" title="Current colour"></span><input type="color" class="pick" id="txtPick" value="#ffffff" title="Pick a colour"><input type="text" class="hexin" id="txtHex" maxlength="7" placeholder="#RRGGBB" spellcheck="false"></div>
+              <span class="lab" style="margin-top:8px">Word highlight</span>
+              <div class="swatches brand" data-target="hl"></div>
+              <div class="swatches" data-target="hl"><span class="sw" data-c="#ffffff" style="background:#fff"></span><span class="sw" data-c="#fbbf24" style="background:#fbbf24"></span><span class="sw" data-c="#f59e0b" style="background:#f59e0b"></span><span class="sw" data-c="#ef4444" style="background:#ef4444"></span><span class="sw" data-c="#f472b6" style="background:#f472b6"></span><span class="sw" data-c="#a855f7" style="background:#a855f7"></span><span class="sw" data-c="#3b82f6" style="background:#3b82f6"></span><span class="sw" data-c="#46c8ff" style="background:#46c8ff"></span><span class="sw" data-c="#22d3ee" style="background:#22d3ee"></span><span class="sw" data-c="#34d399" style="background:#34d399"></span></div>
+              <div class="colorctl"><span class="sw custom" data-target="hl" title="Current colour"></span><input type="color" class="pick" id="hlPick" value="#fbbf24" title="Pick a colour"><input type="text" class="hexin" id="hlHex" maxlength="7" placeholder="#RRGGBB" spellcheck="false"></div>
             </div>
             <div class="grp"><span class="lab">Font</span>
               <div class="seg" id="fontSeg"><button data-f="rounded">Rounded</button><button data-f="condensed">Condensed</button><button data-f="classic">Classic</button><button data-f="handwritten">Hand</button></div>
+              <div class="seg" id="weightSeg" style="margin-top:6px"><button data-wt="400">Regular</button><button data-wt="700">Bold</button><button data-wt="800">Heavy</button></div>
               <div class="row" style="margin-top:2px"><span class="k">All caps</span><span class="toggle" id="caps" role="switch" tabindex="0"></span></div>
             </div>
           </div>
@@ -183,6 +199,9 @@
             <p class="selinfo" id="capTextInfo"></p>
             <textarea class="capedit" id="capText" spellcheck="true"></textarea>
             <div class="clip-actions"><button class="btn" id="capApply"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg>Apply text</button><button class="btn" id="capReset">Reset</button></div>
+            <span class="lab" style="margin-top:9px">This caption's colour</span>
+            <div class="swatches" data-target="capcolor"><span class="sw" data-c="" style="background:linear-gradient(135deg,#4b5563,#9ca3af)" title="Default (use the global colour)"></span><span class="sw" data-c="#ffffff" style="background:#fff"></span><span class="sw" data-c="#fbbf24" style="background:#fbbf24"></span><span class="sw" data-c="#ef4444" style="background:#ef4444"></span><span class="sw" data-c="#f472b6" style="background:#f472b6"></span><span class="sw" data-c="#a855f7" style="background:#a855f7"></span><span class="sw" data-c="#34d399" style="background:#34d399"></span><span class="sw" data-c="#46c8ff" style="background:#46c8ff"></span></div>
+            <div class="colorctl"><input type="color" class="pick" id="capPick" value="#ffffff" title="Pick a colour"><input type="text" class="hexin" id="capHex" maxlength="7" placeholder="#RRGGBB" spellcheck="false"></div>
           </div>
 
           <div class="grp" id="clipPanel" style="display:none">
@@ -191,6 +210,8 @@
             <p class="selinfo" id="selinfo"></p>
             <p class="muted-note">Drag the red band's edges on the Video track to bracket the exact bit to remove, then cut.</p>
             <div class="clip-actions"><button class="btn danger" id="cutSel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Cut selection</button><button class="btn" id="cutWhole">Cut whole clip</button></div>
+            <div class="clip-actions" style="grid-template-columns:1fr;margin-top:8px"><button class="btn" id="splitAt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M7 9l-4 3 4 3M17 9l4 3-4 3"/></svg>Split at playhead</button></div>
+            <div class="triml"><span class="lab" style="margin:0">Trim</span><input type="number" class="numin" id="trimN" value="0.5" min="0.1" step="0.1"><span class="lab" style="margin:0">s off</span><button class="btn" id="trimFirst">Start</button><button class="btn" id="trimLast">End</button></div>
           </div>
 
           <p class="muted-note" id="hint" style="margin-top:4px">Drag the caption in the preview to move it. Click a Video clip to trim, a caption to edit its text, a zoom to remove. Drag b-roll or graphics blocks to reposition.</p>
@@ -220,13 +241,27 @@
   var $=function(id){return document.getElementById(id);};
   var LANEX=88;
   var scrubbing=false, _seekTarget=null, _seekRAF=0;   // shared so the video's own events yield to a drag
-  var S={dur:0,height:1920,ranges:[],cuts:[],caption:{},captions:[],capEdits:{},
+  var S={dur:0,height:1920,ranges:[],cuts:[],splits:[],caption:{},captions:[],capEdits:{},capColors:{},brandColors:[],
          graphics:[],broll:[],zooms:[],videoUrl:'',proxyUrl:'',driveLink:'',capOff:false};
   function fmt(s){s=Math.max(0,s||0);var m=Math.floor(s/60),ss=Math.floor(s%60);return (m<10?'0':'')+m+':'+(ss<10?'0':'')+ss;}
   function toast(m){$('toastMsg').textContent=m;$('toast').classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(function(){$('toast').classList.remove('show');},2600);}
   function pct(v){return (S.dur?v/S.dur*100:0);}
-  function dirty(){$('save').disabled=false;styleLiveCaption();}
+  function dirty(){commitSnapshot();$('save').disabled=false;styleLiveCaption();}
   function norm(t){return (t||'').replace(/\s+/g,' ').trim().toLowerCase();}
+  // ---- undo: arm a snapshot at each interaction start, commit it only when a change lands ----
+  var HIST=[], HMAX=100, PRISTINE=null, _pending=null;
+  function cloneEdit(s){return JSON.parse(JSON.stringify({dur:s.dur,height:s.height,ranges:s.ranges,cuts:s.cuts,splits:s.splits,caption:s.caption,captions:s.captions,capEdits:s.capEdits,capColors:s.capColors,graphics:s.graphics,broll:s.broll,zooms:s.zooms}));}
+  function refreshUndo(){var u=$('undo');if(u)u.disabled=HIST.length===0;}
+  function armSnapshot(){_pending=cloneEdit(S);}          // before any handler mutates S
+  function commitSnapshot(){if(_pending){HIST.push(_pending);if(HIST.length>HMAX)HIST.shift();_pending=null;refreshUndo();}}
+  function undo(){
+    if(!HIST.length){toast('Nothing to undo');return;}
+    _pending=null;Object.assign(S,HIST.pop());
+    selClip=-1;editIdx=-1;band.a=0;band.b=0;
+    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';
+    reflectCaption();renderTimeline();updateLiveCaption($('video').currentTime||0);
+    $('save').disabled=(JSON.stringify(cloneEdit(S))===PRISTINE);refreshUndo();toast('Undid last change');
+  }
 
   if(!jobId){$('loading').textContent='No job selected.';return;}
   fetch('/api/jobs/'+jobId+'/studio',{cache:'no-store'}).then(function(r){return r.json();}).then(init).catch(function(){$('loading').textContent='Could not open this job.';});
@@ -239,12 +274,15 @@
     S.caption=Object.assign({},(d.edl.style&&d.edl.style.captions)||{},mapOv(d.overrides||{}));
     S.captions=(d.captions||[]).map(function(c){return {start:+c.start,end:+c.end,text:c.text,orig:c.text};});
     (d.caption_text_overrides||[]).forEach(function(o){S.capEdits[norm(o.from)]=o.to;});
+    (d.caption_color_overrides||[]).forEach(function(o){S.capColors[norm(o.from)]=o.color;});
+    S.brandColors=(d.brand_colors||[]);
     // apply existing text edits to the shown chunks
     S.captions.forEach(function(c){if(S.capEdits[norm(c.orig)]!=null)c.text=S.capEdits[norm(c.orig)];});
     S.graphics=(d.graphics_override||d.edl.graphics||[]).map(function(g){return Object.assign({},g);});
     S.broll=(d.broll_override||d.edl.broll||[]).map(function(b){return Object.assign({},b);});
     S.zooms=(d.zooms||[]).map(function(z){return {at:+z.at,duration:+z.duration||2.5,strength:+z.strength||0.12};});
     (d.cut_spans||[]).forEach(function(c){S.cuts.push({source:c.source,start:+c.start,end:+c.end});});
+    (d.split_points||[]).forEach(function(p){S.splits.push({source:p.source,at:+p.at});});
     S.videoUrl=d.video_url; S.proxyUrl=d.proxy_url||''; S.driveLink=d.drive_link||'';
 
     $('client').textContent=d.client_name||'Client';$('jobname').textContent=d.folder_name||jobId;
@@ -273,9 +311,12 @@
     v.addEventListener('error',function(){vload.classList.remove('on');$('novid').style.display='flex';$('drivelink').href=S.driveLink||S.videoUrl;});
 
     $('loading').style.display='none';$('editor').style.display='flex';
-    reflectCaption();renderRuler();renderTimeline();wire();updateLiveCaption(0);
+    buildBrandSwatches();reflectCaption();renderRuler();renderTimeline();wire();updateLiveCaption(0);
+    PRISTINE=JSON.stringify(cloneEdit(S));
+    document.addEventListener('pointerdown',armSnapshot,true);   // capture: fires before handlers
+    document.addEventListener('keydown',function(e){if(e.metaKey||e.ctrlKey)return;if(!_pending)armSnapshot();},true);
   }
-  function mapOv(ov){var c={};if('caption_position' in ov)c.position=ov.caption_position;if('caption_y' in ov)c.y=ov.caption_y;if('caption_font_size' in ov)c.font_size=ov.caption_font_size;if('caption_color' in ov)c.color=ov.caption_color;if('highlight_color' in ov)c.highlight_color=ov.highlight_color;if('caption_font' in ov)c.font=ov.caption_font;if('caption_uppercase' in ov)c.uppercase=ov.caption_uppercase;return c;}
+  function mapOv(ov){var c={};if('caption_position' in ov)c.position=ov.caption_position;if('caption_y' in ov)c.y=ov.caption_y;if('caption_font_size' in ov)c.font_size=ov.caption_font_size;if('caption_color' in ov)c.color=ov.caption_color;if('highlight_color' in ov)c.highlight_color=ov.highlight_color;if('caption_font' in ov)c.font=ov.caption_font;if('caption_uppercase' in ov)c.uppercase=ov.caption_uppercase;if('caption_weight' in ov)c.weight=ov.caption_weight;return c;}
 
   function reflectCaption(){
     var c=S.caption;
@@ -283,8 +324,9 @@
     $('capguide').style.top=(yf*100)+'%';
     $('sz').value=c.font_size||74;$('szv').textContent=Math.round(c.font_size||74);
     seg('fontSeg','data-f',c.font||'rounded');
+    seg('weightSeg','data-wt',String(c.weight||700));
     $('caps').classList.toggle('on',!!c.uppercase);$('caps').setAttribute('aria-checked',!!c.uppercase);
-    swatch('text',c.color||'#ffffff');swatch('hl',c.highlight_color||'#fbbf24');
+    swatch('text',c.color||'#ffffff');swatch('hl',c.highlight_color||S.brandColors[0]||'#fbbf24');
     seg('posSeg','data-p',c.position||'');
     styleLiveCaption();
   }
@@ -298,17 +340,18 @@
     t.style.fontSize=Math.max(9,(c.font_size||74)*stageH/(S.height||1920))+'px';
     t.style.color=c.color||'#ffffff';
     t.style.textTransform=c.uppercase?'uppercase':'none';
+    t.style.fontWeight=c.weight||700;
     t.style.fontFamily=CAP_FONTS[c.font]||CAP_FONTS.rounded;
   }
   function updateLiveCaption(t){
     var el=$('capguidetext'),g=$('capguide'),ch=null;
     for(var i=0;i<S.captions.length;i++){if(S.captions[i].start<=t&&t<S.captions[i].end){ch=S.captions[i];break;}}
-    if(ch){el.textContent=ch.text;g.style.opacity='1';}
+    if(ch){el.textContent=ch.text;g.style.opacity='1';el.style.color=S.capColors[norm(ch.orig)]||S.caption.color||'#ffffff';}
     else if(S.captions.length){
       // between words: show the nearest caption faded so the box stays visible + draggable
       var near=S.captions[0],bd=1e9;
       for(var j=0;j<S.captions.length;j++){var d=Math.min(Math.abs(S.captions[j].start-t),Math.abs(S.captions[j].end-t));if(d<bd){bd=d;near=S.captions[j];}}
-      el.textContent=near.text;g.style.opacity='.32';
+      el.textContent=near.text;g.style.opacity='.32';el.style.color=S.capColors[norm(near.orig)]||S.caption.color||'#ffffff';
     } else {el.textContent='Captions';g.style.opacity='.5';}
   }
   // When you touch a caption control, swap the burned render for the clean proxy so
@@ -321,7 +364,31 @@
     if(!_cleanNudged){_cleanNudged=true;toast('Clean preview on — caption edits show live here');}
   }
   function seg(id,a,v){var g=$(id);if(!g)return;[].forEach.call(g.children,function(b){b.classList.toggle('on',b.getAttribute(a)===v);});}
-  function swatch(t,v){document.querySelectorAll('.swatches[data-target="'+t+'"] .sw').forEach(function(s){s.classList.toggle('on',(s.getAttribute('data-c')||'').toLowerCase()===String(v).toLowerCase());});}
+  function normHex(v){v=String(v||'').trim();var m=/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(v);if(!m)return null;var h=m[1].toLowerCase();if(h.length===3)h=h.replace(/./g,function(c){return c+c;});return '#'+h;}
+  function swatch(t,v){
+    v=String(v||'').toLowerCase();var matched=false;
+    document.querySelectorAll('.swatches[data-target="'+t+'"] .sw').forEach(function(s){
+      var on=(s.getAttribute('data-c')||'').toLowerCase()===v;s.classList.toggle('on',on);if(on&&v)matched=true;});
+    var ids={text:['txtPick','txtHex'],hl:['hlPick','hlHex'],capcolor:['capPick','capHex']}[t]||[];
+    var pick=$(ids[0]),hex=$(ids[1]);
+    if(pick&&/^#[0-9a-f]{6}$/.test(v))pick.value=v;
+    if(hex&&document.activeElement!==hex)hex.value=(v&&v.charAt(0)==='#')?v:'';
+    var cust=document.querySelector('.sw.custom[data-target="'+t+'"]');
+    if(cust){cust.style.background=v||'transparent';cust.classList.toggle('on',!matched&&/^#[0-9a-f]{6}$/.test(v));}
+  }
+  function setColor(t,v){ensureCleanPreview();if(t==='text')S.caption.color=v;else if(t==='hl')S.caption.highlight_color=v;swatch(t,v);dirty();updateLiveCaption($('video').currentTime||0);}
+  function setCapColor(c){
+    if(editIdx<0)return;ensureCleanPreview();
+    var key=norm(S.captions[editIdx].orig),v=c?normHex(c):'';
+    if(v)S.capColors[key]=v;else delete S.capColors[key];
+    swatch('capcolor',v||'');renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);
+  }
+  function buildBrandSwatches(){
+    ['text','hl'].forEach(function(t){
+      var row=document.querySelector('.swatches.brand[data-target="'+t+'"]');if(!row)return;row.innerHTML='';
+      (S.brandColors||[]).forEach(function(hex){var s=document.createElement('span');s.className='sw';s.setAttribute('data-c',hex);s.style.background=hex;s.title='Brand '+hex;row.appendChild(s);});
+    });
+  }
 
   function renderRuler(){var r=$('ruler');r.innerHTML='';for(var i=0;i<6;i++){var t=document.createElement('span');t.className='tick';t.textContent=fmt(S.dur*i/6);r.appendChild(t);}}
 
@@ -371,6 +438,7 @@
   function editCaption(i){editIdx=i;var c=S.captions[i];$('capTextPanel').style.display='block';$('clipPanel').style.display='none';
     $('capTextInfo').innerHTML='Caption at <b>'+fmt(c.start)+'</b> — edit the words shown on screen';$('capText').value=c.text;$('capText').focus();
     // jump the preview to this caption on the clean proxy so you see your edit live
+    swatch('capcolor', S.capColors[norm(c.orig)]||'');
     ensureCleanPreview();var mid=Math.min((S.dur||1e9),c.start+0.05);try{$('video').currentTime=mid;}catch(e){}moveHead(mid);$('cur').textContent=fmt(mid);updateLiveCaption(mid);}
   // ---- video clip trim (cut band) ----
   var selClip=-1, band={a:0,b:0}; // band in output-seconds within the whole timeline
@@ -390,6 +458,8 @@
     grip(gl,'a');grip(gr,'b');tv.appendChild(el);}
 
   function wire(){
+    $('undo').addEventListener('click',undo);
+    window.addEventListener('keydown',function(e){if((e.metaKey||e.ctrlKey)&&(e.key==='z'||e.key==='Z')&&!e.shiftKey){var a=document.activeElement;if(a&&(a.id==='capText'||a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return;e.preventDefault();undo();}});
     $('play').addEventListener('click',function(){var v=$('video');if(v.paused){v.play();$('pico').innerHTML='<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';}else{v.pause();$('pico').innerHTML='<path d="M8 5v14l11-7z"/>';}});
     $('safeToggle').addEventListener('click',function(){this.classList.toggle('on');$('stage').classList.toggle('show-safe');});
     $('capOff').addEventListener('click',function(){S.capOff=!S.capOff;this.classList.toggle('on',S.capOff);var v=$('video'),t=v.currentTime;$('vload').classList.add('on');v.src=S.capOff?S.proxyUrl:S.videoUrl;v.currentTime=t||0;});
@@ -403,15 +473,38 @@
     $('sz').addEventListener('input',function(){ensureCleanPreview();$('szv').textContent=this.value;S.caption.font_size=+this.value;dirty();});
     $('widthSeg').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;seg('widthSeg','data-w',b.getAttribute('data-w'));S.caption.line_width=b.getAttribute('data-w');dirty();});
     $('fontSeg').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;ensureCleanPreview();S.caption.font=b.getAttribute('data-f');seg('fontSeg','data-f',S.caption.font);dirty();});
+    $('weightSeg').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;ensureCleanPreview();S.caption.weight=+b.getAttribute('data-wt');seg('weightSeg','data-wt',String(S.caption.weight));dirty();});
     function flip(){ensureCleanPreview();var on=$('caps').classList.toggle('on');$('caps').setAttribute('aria-checked',on);S.caption.uppercase=on;dirty();}
     $('caps').addEventListener('click',flip);$('caps').addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();flip();}});
-    document.querySelectorAll('.swatches').forEach(function(w){w.addEventListener('click',function(e){var s=e.target.closest('.sw');if(!s)return;ensureCleanPreview();var c=s.getAttribute('data-c');swatch(w.getAttribute('data-target'),c);if(w.getAttribute('data-target')==='text')S.caption.color=c;else S.caption.highlight_color=c;dirty();});});
+    document.querySelectorAll('.swatches').forEach(function(w){w.addEventListener('click',function(e){var s=e.target.closest('.sw');if(!s)return;var t=w.getAttribute('data-target');var c=s.getAttribute('data-c');if(t==='capcolor'){setCapColor(c);}else{setColor(t,c);}});});
+    // native colour pickers + hex inputs (converge on the same setters)
+    if($('txtPick'))$('txtPick').addEventListener('input',function(){setColor('text',this.value.toLowerCase());});
+    if($('hlPick'))$('hlPick').addEventListener('input',function(){setColor('hl',this.value.toLowerCase());});
+    if($('txtHex'))$('txtHex').addEventListener('input',function(){var v=normHex(this.value);if(v)setColor('text',v);});
+    if($('hlHex'))$('hlHex').addEventListener('input',function(){var v=normHex(this.value);if(v)setColor('hl',v);});
+    if($('capPick'))$('capPick').addEventListener('input',function(){setCapColor(this.value.toLowerCase());});
+    if($('capHex'))$('capHex').addEventListener('input',function(){var v=normHex(this.value);if(v)setCapColor(v);});
     // caption text apply/reset
     $('capApply').addEventListener('click',function(){if(editIdx<0)return;var c=S.captions[editIdx];var t=$('capText').value.trim();if(!t)return;c.text=t;if(norm(t)===norm(c.orig))delete S.capEdits[norm(c.orig)];else S.capEdits[norm(c.orig)]=t;renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);toast('Caption text updated');});
     $('capReset').addEventListener('click',function(){if(editIdx<0)return;var c=S.captions[editIdx];c.text=c.orig;delete S.capEdits[norm(c.orig)];$('capText').value=c.orig;renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);});
     // cut selection / whole
     $('cutSel').addEventListener('click',function(){if(selClip<0)return;var r=S.ranges[selClip],off=clipOff(selClip);var s=r.start+(band.a-off),e=r.start+(band.b-off);if(e-s<0.05){toast('Bracket a bit first');return;}S.cuts.push({source:r.source,start:+s.toFixed(3),end:+e.toFixed(3)});renderTimeline();selectClip(selClip);dirty();toast('Marked to cut — Save to apply');});
     $('cutWhole').addEventListener('click',function(){if(selClip<0)return;var r=S.ranges[selClip];S.cuts.push({source:r.source,start:r.start,end:r.end});renderTimeline();dirty();toast('Whole clip marked to cut');});
+    $('splitAt').addEventListener('click',function(){
+      var t=(_seekTarget!=null?_seekTarget:($('video').currentTime||0));var m=outToSource(t);if(!m)return;
+      var i=m.i,r=S.ranges[i],EPS=0.15;
+      if(m.src<=r.start+EPS||m.src>=r.end-EPS){toast('Move the playhead into the clip, away from its edges');return;}
+      S.splits.push({source:r.source,at:+m.src.toFixed(3)});
+      var a={},b={};for(var k in r){a[k]=r[k];b[k]=r[k];}a.end=m.src;b.start=m.src;   // subdivide for instant feedback
+      S.ranges.splice(i,1,a,b);selClip=-1;$('clipPanel').style.display='none';
+      renderTimeline();dirty();toast('Split — Save to apply');});
+    function _trim(head){if(selClip<0)return;var r=S.ranges[selClip],N=Math.max(0.1,+$('trimN').value||0.5),len=r.end-r.start;
+      if(N>=len){toast('That is longer than the clip — use Cut whole clip');return;}
+      if(head)S.cuts.push({source:r.source,start:+r.start.toFixed(3),end:+(r.start+N).toFixed(3)});
+      else S.cuts.push({source:r.source,start:+(r.end-N).toFixed(3),end:+r.end.toFixed(3)});
+      renderTimeline();selectClip(selClip);dirty();toast('Trimmed '+(head?'start':'end')+' '+N+'s — Save to apply');}
+    $('trimFirst').addEventListener('click',function(){_trim(true);});
+    $('trimLast').addEventListener('click',function(){_trim(false);});
     // ---- scrub: drag the playhead pin, or click/drag the time ruler, to seek ----
     // The pin follows the mouse instantly (never the video's laggy clock). The actual
     // video seek is throttled to one per animation frame so streamed seeks can't storm.
@@ -443,9 +536,10 @@
     if(c.position)caption.caption_position=c.position;else if(c.y!=null)caption.caption_y=Math.round(c.y);
     if(c.font_size!=null)caption.caption_font_size=Math.round(c.font_size);
     if(c.color)caption.caption_color=c.color;if(c.highlight_color)caption.highlight_color=c.highlight_color;
-    if(c.font)caption.caption_font=c.font;if(c.uppercase!=null)caption.caption_uppercase=!!c.uppercase;
+    if(c.font)caption.caption_font=c.font;if(c.uppercase!=null)caption.caption_uppercase=!!c.uppercase;if(c.weight!=null)caption.caption_weight=+c.weight;
     var capEdits=Object.keys(S.capEdits).map(function(k){var o=S.captions.filter(function(x){return norm(x.orig)===k;})[0];return {from:o?o.orig:k,to:S.capEdits[k]};});
-    var payload={caption:caption,cut_spans:S.cuts,caption_text_overrides:capEdits,
+    var capColors=Object.keys(S.capColors).map(function(k){var o=S.captions.filter(function(x){return norm(x.orig)===k;})[0];return {from:o?o.orig:k,color:S.capColors[k]};}).filter(function(e){return e.color;});
+    var payload={caption:caption,cut_spans:S.cuts,split_points:S.splits,caption_text_overrides:capEdits,caption_color_overrides:capColors,
       graphics_override:S.graphics,broll_override:S.broll,zooms:S.zooms,rerender:true};
     $('save').disabled=true;$('save').innerHTML='Re-rendering…';
     fetch('/api/jobs/'+jobId+'/studio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
