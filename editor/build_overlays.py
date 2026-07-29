@@ -524,11 +524,21 @@ def build_graphics(edit, edl):
             "width":  W, "height": H,
             "accent": props.get("accent") or accent,
         })
-        try:
-            _rr.render_template(tmpl, out_dir / f"g{i}.mov", props)
-            print(f"graphics: rendered g{i} ({tmpl})")
-        except Exception as e:
-            print(f"graphics: g{i} ({tmpl}) failed ({e}) -> skipping", file=sys.stderr)
+        # Retry once: a single Remotion/Chromium render can fail transiently
+        # (memory pressure, a flaky headless launch), which is why a graphic
+        # sometimes vanished from an otherwise-fine render.
+        last_err = None
+        for attempt in range(2):
+            try:
+                _rr.render_template(tmpl, out_dir / f"g{i}.mov", props)
+                print(f"graphics: rendered g{i} ({tmpl})" + (" (retry)" if attempt else ""))
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                print(f"graphics: g{i} ({tmpl}) attempt {attempt+1} failed ({e})", file=sys.stderr)
+        if last_err is not None:
+            print(f"graphics: g{i} ({tmpl}) skipped after retries", file=sys.stderr)
 
 
 def main():

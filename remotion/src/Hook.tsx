@@ -7,6 +7,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { FONT_FAMILY } from "./font";
+import { readableAccent } from "./util";
 
 export type HookProps = {
   text: string;
@@ -43,7 +44,7 @@ export const Hook: React.FC<HookProps> = ({ text, accent }) => {
           fontSize: Math.round(height * 0.052),
           lineHeight: 1.03,
           letterSpacing: -1,
-          color: accent,
+          color: readableAccent(accent),
           textTransform: "uppercase",
           textShadow: "0 8px 28px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.7)",
         }}

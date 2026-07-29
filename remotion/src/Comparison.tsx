@@ -7,6 +7,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { FONT_FAMILY } from "./font";
+import { readableAccent } from "./util";
 
 export type ComparisonProps = {
   leftLabel: string;
@@ -65,7 +66,7 @@ export const Comparison: React.FC<ComparisonProps> = ({
     alignItems: "flex-start",
     gap: height * 0.012,
     padding: `${height * 0.03}px ${height * 0.042}px`,
-    backgroundColor: "rgba(0,0,0,0.42)",
+    backgroundColor: "rgba(10,12,16,0.8)",
     borderRadius: height * 0.02,
     boxShadow: "0 18px 60px rgba(0,0,0,0.45)",
     boxSizing: "border-box",
@@ -123,7 +124,7 @@ export const Comparison: React.FC<ComparisonProps> = ({
           border: `1px solid ${accent}59`,
         }}
       >
-        <div style={{ ...labelBase, color: accent }}>{rightLabel}</div>
+        <div style={{ ...labelBase, color: readableAccent(accent) }}>{rightLabel}</div>
         <div style={textBase}>{rightText}</div>
       </div>
     </AbsoluteFill>

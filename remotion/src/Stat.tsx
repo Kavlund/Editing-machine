@@ -7,6 +7,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { FONT_FAMILY } from "./font";
+import { readableAccent } from "./util";
 
 export type StatProps = {
   value: string;
@@ -20,6 +21,7 @@ export type StatProps = {
 export const Stat: React.FC<StatProps> = ({ value, label, accent }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, height } = useVideoConfig();
+  const ac = readableAccent(accent);
 
   // Value pops in BIG and punchy with a lively, slightly-overshooting spring.
   const valueEnter = spring({
@@ -66,7 +68,7 @@ export const Stat: React.FC<StatProps> = ({ value, label, accent }) => {
           fontSize: Math.round(height * 0.13),
           lineHeight: 1,
           letterSpacing: -2,
-          color: accent,
+          color: ac,
           textShadow:
             "0 12px 40px rgba(0,0,0,0.6), 0 3px 8px rgba(0,0,0,0.75)",
         }}

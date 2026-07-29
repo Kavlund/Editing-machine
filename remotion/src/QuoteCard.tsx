@@ -7,6 +7,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { FONT_FAMILY } from "./font";
+import { readableAccent } from "./util";
 
 export type QuoteCardProps = {
   quote: string;
@@ -24,6 +25,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, width, height } = useVideoConfig();
+  const ac = readableAccent(accent);
 
   // 1) Big decorative opening quotation mark scales + fades in first.
   const markEnter = spring({
@@ -80,7 +82,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({
             width * 0.06,
           )}px ${Math.round(height * 0.045)}px`,
           borderRadius: panelRadius,
-          backgroundColor: "rgba(0,0,0,0.42)",
+          backgroundColor: "rgba(10,12,16,0.8)",
           boxShadow: "0 18px 60px rgba(0,0,0,0.45)",
           display: "flex",
           flexDirection: "column",
@@ -99,7 +101,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({
             fontWeight: 700,
             fontSize: markSize,
             lineHeight: 1,
-            color: accent,
+            color: ac,
             textShadow: "0 8px 24px rgba(0,0,0,0.5)",
           }}
         >
@@ -138,7 +140,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({
               fontSize: attribSize,
               letterSpacing: "0.06em",
               textTransform: "uppercase",
-              color: accent,
+              color: ac,
               textShadow: "0 2px 10px rgba(0,0,0,0.6)",
             }}
           >
@@ -146,7 +148,7 @@ export const QuoteCard: React.FC<QuoteCardProps> = ({
               style={{
                 width: Math.round(width * 0.035),
                 height: Math.max(2, Math.round(height * 0.003)),
-                backgroundColor: accent,
+                backgroundColor: ac,
                 borderRadius: 999,
               }}
             />

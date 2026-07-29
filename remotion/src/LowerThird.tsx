@@ -7,6 +7,7 @@ import {
   useVideoConfig,
 } from "remotion";
 import { FONT_FAMILY } from "./font";
+import { readableAccent } from "./util";
 
 export type LowerThirdProps = {
   name: string;
@@ -24,6 +25,7 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames, width, height } = useVideoConfig();
+  const ac = readableAccent(accent);
 
   // Ease-out slide in from the left.
   const enter = spring({
@@ -68,7 +70,7 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
           alignItems: "stretch",
           borderRadius: Math.round(height * 0.012),
           overflow: "hidden",
-          backgroundColor: "rgba(0,0,0,0.5)",
+          backgroundColor: "rgba(10,12,16,0.72)",
           boxShadow: "0 10px 34px rgba(0,0,0,0.45)",
         }}
       >
@@ -77,7 +79,7 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
           style={{
             width: tabWidth,
             minWidth: tabWidth,
-            backgroundColor: accent,
+            backgroundColor: ac,
           }}
         />
         <div
@@ -112,7 +114,7 @@ export const LowerThird: React.FC<LowerThirdProps> = ({
               fontWeight: 400,
               fontSize: subSize,
               lineHeight: 1.1,
-              color: accent,
+              color: ac,
               letterSpacing: "0.04em",
               textShadow: "0 2px 10px rgba(0,0,0,0.6)",
               whiteSpace: "nowrap",
