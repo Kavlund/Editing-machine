@@ -9,7 +9,7 @@ from typing import List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, HTMLResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 import aiofiles
 
@@ -1251,11 +1251,60 @@ def _trim_preview_cache(keep: Path = None):
         pass
 
 
+def _serve_media(path: str, request: Request, media_type: str = "video/mp4"):
+    """Serve a file with EXPLICIT HTTP Range support so the <video> element can seek.
+
+    FileResponse / the Railway edge were answering Range requests with a full 200
+    (no Accept-Ranges, no 206), so the browser could set the playhead but the video
+    never actually moved and playback restarted from 0. We parse Range ourselves and
+    return 206 partial content, which is what makes scrubbing + play-from-here work."""
+    try:
+        file_size = os.path.getsize(path)
+    except OSError:
+        raise HTTPException(404, "Preview file missing")
+
+    def _chunker(start: int, end: int, chunk: int = 512 * 1024):
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = end - start + 1
+            while remaining > 0:
+                data = f.read(min(chunk, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    base = {"Accept-Ranges": "bytes", "Cache-Control": "no-store"}
+    rng = request.headers.get("range") or request.headers.get("Range")
+    if not rng:
+        return StreamingResponse(_chunker(0, file_size - 1), media_type=media_type,
+                                 headers={**base, "Content-Length": str(file_size)})
+    m = re.match(r"bytes=(\d*)-(\d*)", rng.strip())
+    if not m:
+        return StreamingResponse(_chunker(0, file_size - 1), media_type=media_type,
+                                 headers={**base, "Content-Length": str(file_size)})
+    s_raw, e_raw = m.group(1), m.group(2)
+    if s_raw == "":                              # suffix range: last N bytes
+        length = int(e_raw or 0)
+        start, end = max(0, file_size - length), file_size - 1
+    else:
+        start = int(s_raw)
+        end = int(e_raw) if e_raw else file_size - 1
+    start = max(0, start)
+    end = min(end, file_size - 1)
+    if start > end:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
+    return StreamingResponse(
+        _chunker(start, end), status_code=206, media_type=media_type,
+        headers={**base, "Content-Range": f"bytes {start}-{end}/{file_size}",
+                 "Content-Length": str(end - start + 1)})
+
+
 @app.get("/api/jobs/{job_id}/preview")
-def preview_video(job_id: str, nocaptions: int = 0):
+def preview_video(job_id: str, request: Request, nocaptions: int = 0):
     """Playable, seekable video for the Studio editor. Serves the local copy if one
     exists, else fetches the finished video from Drive into a bounded on-disk cache
-    and serves that (FileResponse honours Range requests, so scrubbing works).
+    and serves that. Range-aware (see _serve_media) so scrubbing + play-from-here work.
     nocaptions=1 serves the caption-free proxy (on the volume) for clean caption drag."""
     path = JOBS_DIR / f"{job_id}.json"
     if not path.exists():
@@ -1264,11 +1313,11 @@ def preview_video(job_id: str, nocaptions: int = 0):
     if nocaptions:
         proxy = UPLOADS_DIR / job_id / "proxy.mp4"
         if proxy.exists():
-            return FileResponse(str(proxy), media_type="video/mp4")
+            return _serve_media(str(proxy), request)
         raise HTTPException(404, "No caption-free proxy for this job")
     out = job.get("output_path") or ""
     if out and Path(out).exists():
-        return FileResponse(out, media_type="video/mp4")
+        return _serve_media(out, request)
     fid = _extract_drive_id(job.get("drive_link"))
     if not fid:
         raise HTTPException(404, "No video available to preview yet")
@@ -1286,7 +1335,7 @@ def preview_video(job_id: str, nocaptions: int = 0):
         if not ok or not cached.exists() or cached.stat().st_size == 0:
             raise HTTPException(502, "Could not fetch the video from Drive for preview")
     _trim_preview_cache(keep=cached)
-    return FileResponse(str(cached), media_type="video/mp4")
+    return _serve_media(str(cached), request)
 
 
 # ── Zoom timeline (drag-and-drop punch-in markers) ─────────────────────────
