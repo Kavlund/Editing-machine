@@ -1432,6 +1432,108 @@ def _brand_colors_for_job(job: dict) -> list:
     return out
 
 
+def _caption_title_overrides(body: dict) -> dict:
+    """Normalize a Studio {caption, title, grade} body into override-shaped keys
+    (the same set save_studio writes into job_overrides). Used by promote-style."""
+    ov = {}
+    cap = body.get("caption") or {}
+    for k in ("caption_y", "caption_position", "caption_font_size", "caption_color",
+              "highlight_color", "caption_max_width", "caption_font", "caption_uppercase",
+              "caption_weight"):
+        if k in cap:
+            if k in ("caption_color", "highlight_color"):
+                nh = _norm_hex(cap[k])
+                if nh:
+                    ov[k] = nh
+            else:
+                ov[k] = cap[k]
+    if "grade" in body:
+        ov["grade"] = body["grade"]
+    tt = body.get("title")
+    if isinstance(tt, dict):
+        if "enabled" in tt:      ov["title_enabled"] = bool(tt["enabled"])
+        if "text" in tt:         ov["title_text"] = str(tt["text"])
+        if "handwritten" in tt:  ov["title_handwritten"] = str(tt["handwritten"])
+        if "bg" in tt:           ov["title_bg"] = bool(tt["bg"])
+        if "color" in tt:
+            _nh = _norm_hex(tt["color"])
+            if _nh: ov["title_color"] = _nh
+        if "bg_color" in tt:
+            _nh = _norm_hex(tt["bg_color"])
+            if _nh: ov["title_bg_color"] = _nh
+        if tt.get("duration") is not None:
+            try:
+                ov["title_duration"] = float(tt["duration"])
+            except (TypeError, ValueError):
+                pass
+    return ov
+
+
+def _promote_overrides_to_client(client: dict, ov: dict):
+    """Copy a job's dialed-in caption/title/style overrides into the client's editing
+    defaults so future videos start from that look. Pops style_profile keys that would
+    otherwise shadow the new default."""
+    editing = client.setdefault("editing", {})
+    sp = client.get("style_profile") or {}
+    _POS = {"top": .17, "center": .5, "lower-third": .68, "bottom": .84}
+    for k in ("caption_font_size", "caption_max_width", "caption_color", "highlight_color",
+              "caption_font", "caption_uppercase", "caption_weight", "grade"):
+        if k in ov:
+            editing[k] = ov[k]
+    if "caption_position" in ov:
+        _p = str(ov["caption_position"]).strip().lower()
+        if _p in _POS:
+            editing["caption_y"] = int(_POS[_p] * 1920)
+    elif "caption_y" in ov:
+        try:
+            editing["caption_y"] = int(ov["caption_y"])
+        except (TypeError, ValueError):
+            pass
+    # drop style_profile keys that shadow the promoted caption fields in _auto_edl
+    for spk in ("caption_size", "caption_position", "caption_color", "highlight_color",
+                "caption_font", "caption_uppercase"):
+        sp.pop(spk, None)
+    # title -> editing.title (None stops stamping any default card)
+    if "title_enabled" in ov and not ov["title_enabled"]:
+        editing["title"] = None
+    elif "title_text" in ov:
+        _lines = [ln.strip().upper() for ln in re.split(r"[\n|]", str(ov["title_text"])) if ln.strip()][:2]
+        if _lines:
+            _tc = editing.get("title")
+            _tc = dict(_tc) if isinstance(_tc, dict) else {}
+            _tc["impact_lines"] = _lines
+            for a, b in (("title_handwritten", "handwritten"), ("title_color", "color"),
+                         ("title_bg", "bg"), ("title_bg_color", "bg_color"), ("title_duration", "duration")):
+                if a in ov:
+                    _tc[b] = ov[a]
+            editing["title"] = _tc
+
+
+@app.post("/api/jobs/{job_id}/promote-style")
+async def promote_style(job_id: str, request: Request):
+    """Make this video's dialed-in caption/title look the client's default, so future
+    videos for that client start from it. Does NOT re-render this video."""
+    path = JOBS_DIR / f"{job_id}.json"
+    if not path.exists():
+        raise HTTPException(404, "Job not found")
+    job = json.loads(path.read_text())
+    cid = job.get("client_id")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ov = _caption_title_overrides(body) if body else dict(job.get("job_overrides", {}))
+    if not ov:
+        return {"ok": False, "error": "Nothing to save as default"}
+    clients = load_clients()
+    for c in clients:
+        if c.get("id") == cid:
+            _promote_overrides_to_client(c, ov)
+            save_clients(clients)
+            return {"ok": True, "promoted": sorted(ov.keys())}
+    raise HTTPException(404, "Client not found for this job")
+
+
 @app.get("/api/jobs/{job_id}/studio")
 def get_studio(job_id: str):
     """Everything the Studio editor needs to open a finished job: the edit
@@ -1507,6 +1609,31 @@ async def save_studio(job_id: str, request: Request):
                 ov[k] = cap[k]
     if "grade" in body:
         ov["grade"] = body["grade"]
+
+    # Title card -> job_overrides (per-video edit / delete / restyle)
+    tt = body.get("title")
+    if isinstance(tt, dict):
+        if "enabled" in tt:
+            ov["title_enabled"] = bool(tt["enabled"])
+        if "text" in tt:
+            ov["title_text"] = str(tt["text"])
+        if "handwritten" in tt:
+            ov["title_handwritten"] = str(tt["handwritten"])
+        if "bg" in tt:
+            ov["title_bg"] = bool(tt["bg"])
+        if "color" in tt:
+            _nh = _norm_hex(tt["color"])
+            if _nh:
+                ov["title_color"] = _nh
+        if "bg_color" in tt:
+            _nh = _norm_hex(tt["bg_color"])
+            if _nh:
+                ov["title_bg_color"] = _nh
+        if tt.get("duration") is not None:
+            try:
+                ov["title_duration"] = float(tt["duration"])
+            except (TypeError, ValueError):
+                pass
 
     # Caption TEXT edits -> [{from, to}] matched by original text at render
     if isinstance(body.get("caption_text_overrides"), list):
@@ -2229,6 +2356,24 @@ _JOB_CHAT_TOOLS = [
         },
     },
     {
+        "name": "set_voice",
+        "description": (
+            "Choose which voice to keep when a video has TWO voices — a script reader off camera "
+            "and the on-camera person repeating each line. By default the machine keeps the LOUDER "
+            "on-camera voice and drops the reader. Only call this if the WRONG voice was kept: "
+            "keep='quieter' flips to the other voice, keep='both' keeps everyone, keep='louder' "
+            "restores the default. Re-renders after."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "keep": {"type": "string", "enum": ["louder", "quieter", "both"],
+                         "description": "louder = the on-camera person (default), quieter = the other voice, both = keep everyone"},
+            },
+            "required": ["keep"],
+        },
+    },
+    {
         "name": "get_script",
         "description": "Read the script already saved on this video (uploaded with the video, pulled from Drive, or pasted earlier). Use this instead of asking the user to paste it again.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
@@ -2548,6 +2693,25 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
         return {"ok": True, "format": fmt, "rerendering": True,
                 "note": "auto keeps the shape the video was filmed in." if fmt == "auto"
                         else f"Video will be re-rendered as {fmt}."}
+
+    if tool_name == "set_voice":
+        if not job_id:
+            return {"error": "No job context"}
+        job_path = JOBS_DIR / f"{job_id}.json"
+        if not job_path.exists():
+            return {"error": "Job not found"}
+        job = json.loads(job_path.read_text())
+        keep = (tool_input.get("keep") or "louder").strip().lower()
+        _alias = {"on-camera": "louder", "on camera": "louder", "client": "louder", "the person": "louder",
+                  "reader": "quieter", "off-camera": "quieter", "off camera": "quieter", "other voice": "quieter",
+                  "everyone": "both", "keep both": "both", "all": "both"}
+        keep = _alias.get(keep, keep)
+        if keep not in ("louder", "quieter", "both"):
+            return {"error": "keep must be louder, quieter or both"}
+        job["keep_speaker"] = keep
+        _rerender_job(job, job_id)
+        applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"keep_voice": keep}})
+        return {"ok": True, "keep": keep, "rerendering": True}
 
     if tool_name in ("use_pasted_script", "clear_script", "get_script"):
         if not job_id:

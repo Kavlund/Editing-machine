@@ -1180,7 +1180,7 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
     cap_max_w = max(120, min(out_w - 40, cap_max_w))
 
     # ALL-CAPS captions if the reference uses them (or a mandatory directive asks)
-    cap_upper = _truthy(directives.get("caption_uppercase")) or _truthy(style.get("caption_uppercase"))
+    cap_upper = _truthy(directives.get("caption_uppercase")) or _truthy(style.get("caption_uppercase")) or _truthy(editing.get("caption_uppercase"))
 
     ranges = []
     for name, s in source_map.items():
@@ -1211,7 +1211,7 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
     fonts = {k: _font(k) for k in ("handwritten", "impact", "caption")}
     # Caption typeface from the reference: only override for the visibly-distinct
     # looks (condensed / handwritten); rounded / classic keep the default.
-    _cf = str(directives.get("caption_font") or style.get("caption_font") or "").strip().lower()
+    _cf = str(directives.get("caption_font") or style.get("caption_font") or editing.get("caption_font") or "").strip().lower()
     if "condens" in _cf or "tall" in _cf or "impact" in _cf or "bold-sans" in _cf:
         fonts["caption"] = _font("impact")        # Oswald — tall condensed
     elif "hand" in _cf or "script" in _cf or "marker" in _cf:
@@ -1256,6 +1256,7 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
                 "color":           caption_color,
                 "highlight_color": highlight_color,
                 "uppercase":       cap_upper,
+                "weight":          int(editing.get("caption_weight", 700)),   # promoted default; job override still wins
                 "keywords":        keywords or [],   # keyword-emphasis mode
             },
         },
@@ -1475,6 +1476,48 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             _log(job_path, f"transcribe: speaker '{cfg_speaker}' had no words — using all speech instead")
             editing["caption_speaker"] = None
 
+        # ── 3a2. Two voices: keep the louder on-camera one, drop the off-camera reader ──
+        # A script reader feeds lines off camera and the on-camera client repeats them, so
+        # the transcript diarizes into two speakers. Keep the louder (closer mic); override
+        # with job['keep_speaker'] = louder | quieter | both. Rewrites the scratch transcript
+        # so EVERY downstream stage follows the kept voice. Never hard-fails.
+        if not mock_mode:
+            try:
+                _spk_ids = set()
+                for _n, _s in source_map.items():
+                    if _s["trans"].exists():
+                        for _w in json.loads(_s["trans"].read_text()).get("words", []):
+                            if _w.get("type") == "word" and _w.get("start") is not None:
+                                _spk_ids.add(_w.get("speaker_id", "speaker_0"))
+                if len(_spk_ids) >= 2:
+                    _keep = str(job.get("keep_speaker", "louder")).strip().lower()
+                    if _keep == "both":
+                        editing["caption_speaker"] = None
+                        _log(job_path, "speaker-select: two voices — keeping ALL (keep=both)")
+                    else:
+                        from speaker_select import speaker_loudness, choose_kept_speaker
+                        _loud = speaker_loudness(source_map, editing)
+                        _kept_any = False
+                        for _n, _s in source_map.items():
+                            _tbl = _loud.get(_n) or {}
+                            _pick = choose_kept_speaker(_tbl, keep=_keep)
+                            if not _pick:
+                                continue
+                            _tr = json.loads(_s["trans"].read_text())
+                            _tr["words"] = [w for w in _tr.get("words", [])
+                                            if w.get("type") != "word" or w.get("speaker_id") == _pick]
+                            _s["trans"].write_text(json.dumps(_tr))
+                            _kept_any = True
+                            _drop = ", ".join(f"{k} ({v['rms_db']:.1f}dBFS)"
+                                              for k, v in _tbl.items() if k != _pick)
+                            _log(job_path, f"speaker-select [{_n}]: kept {_pick} "
+                                           f"({_tbl[_pick]['rms_db']:.1f}dBFS, {_tbl[_pick]['words']} words) "
+                                           f"over {_drop} — dropped the quieter off-camera voice")
+                        if _kept_any:
+                            editing["caption_speaker"] = None
+            except Exception as _e:
+                _log(job_path, f"speaker-select skipped ({_e})")
+
         # ── 3b. AI edit plan — filler cutting (default ON) + per-video extras ──
         palmier_instructions = job.get("palmier_instructions", "").strip()
         instr_l        = palmier_instructions.lower()
@@ -1609,6 +1652,34 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 elif "hand" in _cf or "script" in _cf:     _fonts["caption"] = _font("handwritten")
                 elif "round" in _cf or "soft" in _cf:      _fonts["caption"] = _font("rounded")
                 else:                                       _fonts["caption"] = _font("caption")
+            # Title card: per-video edit / delete / restyle. Fixes the onboarding title
+            # being stamped verbatim onto every video. Runs AFTER _auto_edl set it from
+            # the client profile, so this wins; it also CREATES the card if none existed.
+            if any(k.startswith("title_") for k in overrides):
+                if "title_enabled" in overrides and not _truthy(overrides["title_enabled"]):
+                    edl.get("style", {}).pop("title", None)            # delete for this video
+                else:
+                    _t = edl.setdefault("style", {}).setdefault("title", {})
+                    if "title_text" in overrides:
+                        _t["impact_lines"] = [ln.strip().upper()
+                                              for ln in re.split(r"[\n|]", str(overrides["title_text"]))
+                                              if ln.strip()][:2]
+                    if "title_handwritten" in overrides:
+                        _t["handwritten"] = str(overrides["title_handwritten"]).strip()
+                    if "title_color" in overrides:
+                        _t["color"] = overrides["title_color"]
+                    if "title_bg" in overrides:
+                        _t["bg"] = _truthy(overrides["title_bg"])
+                    if "title_bg_color" in overrides:
+                        _t["bg_color"] = overrides["title_bg_color"]
+                    if "title_duration" in overrides:
+                        try:
+                            _t["duration"] = float(overrides["title_duration"])
+                        except (TypeError, ValueError):
+                            pass
+                    _t.setdefault("duration", 4.5)   # compose needs duration>0 to show the card
+                    if not (_t.get("impact_lines") or _t.get("handwritten")):
+                        edl.get("style", {}).pop("title", None)       # cleared text -> no card
             _log(job_path, f"Job overrides applied: {list(overrides.keys())}")
 
         # Studio "split a clip" edits: divide ranges at SOURCE-time points FIRST, so a

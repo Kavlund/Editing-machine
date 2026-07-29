@@ -149,14 +149,29 @@ def build_title(edit, edl):
     big_shadows  = [{"offset":(0,12),"alpha":190,"blur":22},{"offset":(0,5),"alpha":230,"blur":8}]
     hand_shadows = [{"offset":(0,9),"alpha":200,"blur":18},{"offset":(0,3),"alpha":230,"blur":6}]
 
+    _tcol = hex_to_rgba(t["color"]) if t.get("color") else (255, 255, 255, 255)
     def draw_big(d):
         for i, ln in enumerate(impact_lines):
-            draw_centered(d, W//2, y2 + i*line_gap, ln, f_imp)
+            draw_centered(d, W//2, y2 + i*line_gap, ln, f_imp, _tcol)
     big  = layer_with_shadow(draw_big, big_shadows)
-    hand = layer_with_shadow(lambda d: draw_centered(d, W//2, y1, L1, f_hand), hand_shadows) if L1 else None
-    full = Image.new("RGBA", (W, H), (0,0,0,0))
-    full.alpha_composite(big)
-    if hand is not None: full.alpha_composite(hand)
+    hand = layer_with_shadow(lambda d: draw_centered(d, W//2, y1, L1, f_hand, _tcol), hand_shadows) if L1 else None
+    text_full = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    text_full.alpha_composite(big)
+    if hand is not None: text_full.alpha_composite(hand)
+    # Optional solid panel behind the title (drawn first so the drop shadows fall on it).
+    if t.get("bg"):
+        bbox = text_full.getbbox()
+        if bbox:
+            padx, pady, rad = int(round(52*VS)), int(round(36*VS)), int(round(26*VS))
+            bgc = hex_to_rgba(t["bg_color"]) if t.get("bg_color") else (10, 12, 16, 210)
+            full = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            ImageDraw.Draw(full).rounded_rectangle(
+                [bbox[0]-padx, bbox[1]-pady, bbox[2]+padx, bbox[3]+pady], radius=rad, fill=bgc)
+            full.alpha_composite(text_full)
+        else:
+            full = text_full
+    else:
+        full = text_full
     crop, (ccx, ccy) = crop_to_content(full)
 
     n = int(dur*FPS); in_t = out_t = 0.45

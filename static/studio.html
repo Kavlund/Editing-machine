@@ -138,6 +138,7 @@
     <div class="spacer"></div>
     <button class="btn ghost" id="undo" title="Undo (⌘Z)" aria-label="Undo last change" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>Undo</button>
     <a class="btn ghost" href="/">Back</a>
+    <button class="btn ghost" id="promoteDefault" title="Make this caption and title look the starting point for this client's future videos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17.3l-5.4 3 1-6-4.3-4.2 6-.9L12 3l2.7 5.2 6 .9-4.3 4.2 1 6z"/></svg>Save look as default</button>
     <button class="btn primary" id="save" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg>Save &amp; re-render</button>
   </div>
   <div id="loading" class="loading">Opening the editor…</div>
@@ -194,6 +195,18 @@
             </div>
           </div>
 
+          <div class="grp" id="titlePanel">
+            <div class="divide"></div>
+            <div class="row"><span class="lab" style="margin:0">Title card</span><span class="toggle" id="titleOn" role="switch" tabindex="0"></span></div>
+            <p class="muted-note" style="margin:2px 0 6px">The headline at the very start. Turn off to remove it from this video.</p>
+            <textarea class="capedit" id="titleText" spellcheck="true" placeholder="HEADLINE&#10;LINE 2 (optional)" style="min-height:50px"></textarea>
+            <input type="text" class="hexin" id="titleHand" placeholder="small line above (optional)" spellcheck="false" style="width:100%;margin-top:6px">
+            <div class="clip-actions" style="margin-top:6px"><button class="btn" id="titleApply">Apply title</button><button class="btn" id="titleReset">Reset</button></div>
+            <div class="colorctl" style="margin-top:8px"><span class="k" style="min-width:58px">Text</span><input type="color" class="pick" id="titlePick" value="#ffffff"><input type="text" class="hexin" id="titleHex" maxlength="7" placeholder="#RRGGBB" spellcheck="false"></div>
+            <div class="row" style="margin-top:8px"><span class="k">Background panel</span><span class="toggle" id="titleBgOn" role="switch" tabindex="0"></span></div>
+            <div class="colorctl"><span class="k" style="min-width:58px">Panel</span><input type="color" class="pick" id="titleBgPick" value="#0a0c10"><input type="text" class="hexin" id="titleBgHex" maxlength="7" placeholder="#RRGGBB" spellcheck="false"></div>
+          </div>
+
           <div class="grp" id="capTextPanel" style="display:none">
             <div class="divide"></div>
             <span class="lab">Edit caption text</span>
@@ -242,7 +255,7 @@
   var $=function(id){return document.getElementById(id);};
   var LANEX=88;
   var scrubbing=false, _seekTarget=null, _seekRAF=0;   // shared so the video's own events yield to a drag
-  var S={dur:0,height:1920,ranges:[],cuts:[],splits:[],caption:{},captions:[],capEdits:{},capColors:{},brandColors:[],
+  var S={dur:0,height:1920,ranges:[],cuts:[],splits:[],caption:{},captions:[],capEdits:{},capColors:{},brandColors:[],title:{},
          graphics:[],broll:[],zooms:[],videoUrl:'',proxyUrl:'',driveLink:'',capOff:false};
   function fmt(s){s=Math.max(0,s||0);var m=Math.floor(s/60),ss=Math.floor(s%60);return (m<10?'0':'')+m+':'+(ss<10?'0':'')+ss;}
   function toast(m){$('toastMsg').textContent=m;$('toast').classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(function(){$('toast').classList.remove('show');},2600);}
@@ -251,7 +264,7 @@
   function norm(t){return (t||'').replace(/\s+/g,' ').trim().toLowerCase();}
   // ---- undo: arm a snapshot at each interaction start, commit it only when a change lands ----
   var HIST=[], HMAX=100, PRISTINE=null, _pending=null;
-  function cloneEdit(s){return JSON.parse(JSON.stringify({dur:s.dur,height:s.height,ranges:s.ranges,cuts:s.cuts,splits:s.splits,caption:s.caption,captions:s.captions,capEdits:s.capEdits,capColors:s.capColors,graphics:s.graphics,broll:s.broll,zooms:s.zooms}));}
+  function cloneEdit(s){return JSON.parse(JSON.stringify({dur:s.dur,height:s.height,ranges:s.ranges,cuts:s.cuts,splits:s.splits,caption:s.caption,captions:s.captions,capEdits:s.capEdits,capColors:s.capColors,title:s.title,graphics:s.graphics,broll:s.broll,zooms:s.zooms}));}
   function refreshUndo(){var u=$('undo');if(u)u.disabled=HIST.length===0;}
   function armSnapshot(){_pending=cloneEdit(S);}          // before any handler mutates S
   function commitSnapshot(){if(_pending){HIST.push(_pending);if(HIST.length>HMAX)HIST.shift();_pending=null;refreshUndo();}}
@@ -273,6 +286,14 @@
     S.ranges=(d.edl.ranges||[]).map(function(r){return {source:r.source,start:+r.start,end:+r.end};});
     S.dur=d.duration || S.ranges.reduce(function(a,r){return a+(r.end-r.start);},0);
     S.caption=Object.assign({},(d.edl.style&&d.edl.style.captions)||{},mapOv(d.overrides||{}));
+    var _et=(d.edl.style&&d.edl.style.title)||{},_ov=d.overrides||{};
+    S.title={enabled:('title_enabled' in _ov)?!!_ov.title_enabled:!!(d.edl.style&&d.edl.style.title),
+      text:('title_text' in _ov)?_ov.title_text:((_et.impact_lines||[]).join('\n')),
+      handwritten:('title_handwritten' in _ov)?_ov.title_handwritten:(_et.handwritten||''),
+      color:('title_color' in _ov)?_ov.title_color:(_et.color||''),
+      bg:('title_bg' in _ov)?!!_ov.title_bg:!!_et.bg,
+      bg_color:('title_bg_color' in _ov)?_ov.title_bg_color:(_et.bg_color||''),
+      duration:('title_duration' in _ov)?_ov.title_duration:(_et.duration||null)};
     S.captions=(d.captions||[]).map(function(c){return {start:+c.start,end:+c.end,text:c.text,orig:c.text};});
     (d.caption_text_overrides||[]).forEach(function(o){S.capEdits[norm(o.from)]=o.to;});
     (d.caption_color_overrides||[]).forEach(function(o){S.capColors[norm(o.from)]=o.color;});
@@ -312,7 +333,7 @@
     v.addEventListener('error',function(){vload.classList.remove('on');$('novid').style.display='flex';$('drivelink').href=S.driveLink||S.videoUrl;});
 
     $('loading').style.display='none';$('editor').style.display='flex';
-    buildBrandSwatches();reflectCaption();renderRuler();renderTimeline();wire();updateLiveCaption(0);
+    buildBrandSwatches();reflectCaption();reflectTitle();renderRuler();renderTimeline();wire();updateLiveCaption(0);
     PRISTINE=JSON.stringify(cloneEdit(S));
     document.addEventListener('pointerdown',armSnapshot,true);   // capture: fires before handlers
     document.addEventListener('keydown',function(e){if(e.metaKey||e.ctrlKey)return;if(!_pending)armSnapshot();},true);
@@ -330,6 +351,17 @@
     swatch('text',c.color||'#ffffff');swatch('hl',c.highlight_color||S.brandColors[0]||'#fbbf24');
     seg('posSeg','data-p',c.position||'');
     styleLiveCaption();
+  }
+  function reflectTitle(){
+    var t=S.title||{};
+    $('titleOn').classList.toggle('on',!!t.enabled);$('titleOn').setAttribute('aria-checked',!!t.enabled);
+    $('titleText').value=t.text||'';$('titleHand').value=t.handwritten||'';
+    $('titlePick').value=/^#[0-9a-f]{6}$/i.test(t.color||'')?t.color:'#ffffff';
+    if(document.activeElement!==$('titleHex'))$('titleHex').value=t.color||'';
+    $('titleBgOn').classList.toggle('on',!!t.bg);$('titleBgOn').setAttribute('aria-checked',!!t.bg);
+    $('titleBgPick').value=/^#[0-9a-f]{6}$/i.test(t.bg_color||'')?t.bg_color:'#0a0c10';
+    if(document.activeElement!==$('titleBgHex'))$('titleBgHex').value=t.bg_color||'';
+    $('titlePanel').style.opacity=t.enabled?'1':'0.55';
   }
   // Live caption on the frame — reflects edits instantly, no re-render needed.
   var CAP_FONTS={rounded:"'Nunito','Trebuchet MS',system-ui,sans-serif",condensed:"'Oswald','Impact','Arial Narrow',system-ui,sans-serif",classic:"'Arial','Helvetica',sans-serif",handwritten:"'Comic Sans MS','Segoe Script',cursive"};
@@ -480,6 +512,7 @@
 
   function wire(){
     $('undo').addEventListener('click',undo);
+    $('promoteDefault').addEventListener('click',promoteDefault);
     window.addEventListener('keydown',function(e){if((e.metaKey||e.ctrlKey)&&(e.key==='z'||e.key==='Z')&&!e.shiftKey){var a=document.activeElement;if(a&&(a.id==='capText'||a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return;e.preventDefault();undo();}});
     $('play').addEventListener('click',function(){var v=$('video');if(v.paused){v.play();$('pico').innerHTML='<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';}else{v.pause();$('pico').innerHTML='<path d="M8 5v14l11-7z"/>';}});
     $('safeToggle').addEventListener('click',function(){this.classList.toggle('on');$('stage').classList.toggle('show-safe');});
@@ -495,6 +528,15 @@
     $('widthSeg').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;seg('widthSeg','data-w',b.getAttribute('data-w'));S.caption.line_width=b.getAttribute('data-w');dirty();});
     $('fontSeg').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;ensureCleanPreview();S.caption.font=b.getAttribute('data-f');seg('fontSeg','data-f',S.caption.font);dirty();});
     $('weightSeg').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;ensureCleanPreview();S.caption.weight=+b.getAttribute('data-wt');seg('weightSeg','data-wt',String(S.caption.weight));dirty();});
+    // ---- title card ----
+    $('titleOn').addEventListener('click',function(){var on=!S.title.enabled;S.title.enabled=on;$('titleOn').classList.toggle('on',on);$('titleOn').setAttribute('aria-checked',on);$('titlePanel').style.opacity=on?'1':'0.55';dirty();});
+    $('titleApply').addEventListener('click',function(){S.title.text=$('titleText').value;S.title.handwritten=$('titleHand').value;if((S.title.text||'').trim())S.title.enabled=true;reflectTitle();dirty();toast('Title updated');});
+    $('titleReset').addEventListener('click',function(){S.title.text='';S.title.handwritten='';reflectTitle();dirty();});
+    $('titlePick').addEventListener('input',function(){S.title.color=this.value.toLowerCase();$('titleHex').value=S.title.color;dirty();});
+    $('titleHex').addEventListener('input',function(){var v=normHex(this.value);if(v){S.title.color=v;$('titlePick').value=v;dirty();}});
+    $('titleBgOn').addEventListener('click',function(){var on=!S.title.bg;S.title.bg=on;$('titleBgOn').classList.toggle('on',on);$('titleBgOn').setAttribute('aria-checked',on);dirty();});
+    $('titleBgPick').addEventListener('input',function(){S.title.bg_color=this.value.toLowerCase();$('titleBgHex').value=S.title.bg_color;dirty();});
+    $('titleBgHex').addEventListener('input',function(){var v=normHex(this.value);if(v){S.title.bg_color=v;$('titleBgPick').value=v;dirty();}});
     function flip(){ensureCleanPreview();var on=$('caps').classList.toggle('on');$('caps').setAttribute('aria-checked',on);S.caption.uppercase=on;dirty();}
     $('caps').addEventListener('click',flip);$('caps').addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();flip();}});
     document.querySelectorAll('.swatches').forEach(function(w){w.addEventListener('click',function(e){var s=e.target.closest('.sw');if(!s)return;var t=w.getAttribute('data-target');var c=s.getAttribute('data-c');if(t==='capcolor'){setCapColor(c);}else{setColor(t,c);}});});
@@ -552,6 +594,21 @@
   }
   function moveHead(t){$('playhead').style.left='calc('+LANEX+'px + '+(S.dur?t/S.dur:0)+' * (100% - '+LANEX+'px))';}
 
+  function _capTitlePayload(){
+    var c=S.caption,caption={};
+    if(c.position)caption.caption_position=c.position;else if(c.y!=null)caption.caption_y=Math.round(c.y);
+    if(c.font_size!=null)caption.caption_font_size=Math.round(c.font_size);
+    if(c.color)caption.caption_color=c.color;if(c.highlight_color)caption.highlight_color=c.highlight_color;
+    if(c.font)caption.caption_font=c.font;if(c.uppercase!=null)caption.caption_uppercase=!!c.uppercase;if(c.weight!=null)caption.caption_weight=+c.weight;
+    var _t=S.title||{};var title={enabled:!!_t.enabled,text:_t.text||'',handwritten:_t.handwritten||'',bg:!!_t.bg};
+    if(_t.color)title.color=_t.color;if(_t.bg_color)title.bg_color=_t.bg_color;if(_t.duration!=null)title.duration=_t.duration;
+    return {caption:caption,title:title};
+  }
+  function promoteDefault(){
+    fetch('/api/jobs/'+jobId+'/promote-style',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(_capTitlePayload())})
+      .then(function(r){return r.json();}).then(function(res){toast(res&&res.ok?"Saved as this client's default look — future videos start here":"Nothing to save as default");})
+      .catch(function(){toast('Could not save the default');});
+  }
   function save(){
     var c=S.caption,caption={};
     if(c.position)caption.caption_position=c.position;else if(c.y!=null)caption.caption_y=Math.round(c.y);
@@ -560,7 +617,9 @@
     if(c.font)caption.caption_font=c.font;if(c.uppercase!=null)caption.caption_uppercase=!!c.uppercase;if(c.weight!=null)caption.caption_weight=+c.weight;
     var capEdits=Object.keys(S.capEdits).map(function(k){var o=S.captions.filter(function(x){return norm(x.orig)===k;})[0];return {from:o?o.orig:k,to:S.capEdits[k]};});
     var capColors=Object.keys(S.capColors).map(function(k){var o=S.captions.filter(function(x){return norm(x.orig)===k;})[0];return {from:o?o.orig:k,color:S.capColors[k]};}).filter(function(e){return e.color;});
-    var payload={caption:caption,cut_spans:S.cuts,split_points:S.splits,caption_text_overrides:capEdits,caption_color_overrides:capColors,
+    var _t=S.title||{};var title={enabled:!!_t.enabled,text:_t.text||'',handwritten:_t.handwritten||'',bg:!!_t.bg};
+    if(_t.color)title.color=_t.color;if(_t.bg_color)title.bg_color=_t.bg_color;if(_t.duration!=null)title.duration=_t.duration;
+    var payload={caption:caption,title:title,cut_spans:S.cuts,split_points:S.splits,caption_text_overrides:capEdits,caption_color_overrides:capColors,
       graphics_override:S.graphics,broll_override:S.broll,zooms:S.zooms,rerender:true};
     $('save').disabled=true;$('save').innerHTML='Re-rendering…';
     fetch('/api/jobs/'+jobId+'/studio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
