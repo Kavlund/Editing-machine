@@ -2020,6 +2020,10 @@ For B-ROLL changes: call list_broll first to see what's currently in the video a
 available, then use add_broll / remove_broll. B-roll is auto-matched by the AI, and your edits
 fine-tune it — additions and removals persist across re-renders. Use reset_broll to go back to pure
 auto-matching. To place a clip, give a short exact quote from the transcript for the moment it should appear.
+To change WHICH part of a VIDEO clip is used ("use clip X from 10s to 15s", "start that clip at 0:08"),
+call set_broll_span with the source in/out points in seconds (convert mm:ss to seconds like zoom). It sets
+the clip's source in/out, not where it appears; the clip must already be placed (add_broll first). Call
+list_broll first for the exact filename (and the at_sec if the same clip is used more than once). Video only.
 PHOTOS (still images) can show two ways: a "card" that pops up over the speaker (BAM), or "full" screen.
 The AI picks per photo by default; pass style on add_broll to force one. If the user wants every photo to
 pop up as a card (e.g. "make all the pictures pop in", "always use the BAM effect"), call set_photo_style
@@ -2139,6 +2143,20 @@ _JOB_CHAT_TOOLS = [
         "name": "reset_broll",
         "description": "Discard all manual B-roll add/remove edits and let the AI re-match B-roll from scratch on the next render.",
         "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "set_broll_span",
+        "description": "Set WHICH part of a VIDEO b-roll clip's source to use (its in and out point), then re-render. Use for 'use clip X from 10s to 15s', 'start that clip at 0:08', 'trim the source of clip Y to 3-6 seconds'. Applies to a video clip already placed in the video (call list_broll first). Not for photos.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file":    {"type": "string", "description": "Exact clip filename from list_broll"},
+                "src_in":  {"type": "number", "description": "Start point IN THE SOURCE clip, in seconds"},
+                "src_out": {"type": "number", "description": "Optional end point in the source clip; omit to keep the current on-screen length and just start later"},
+                "at_sec":  {"type": "number", "description": "Optional: the placement's output timestamp (from list_broll) to disambiguate when the same clip is placed more than once"},
+            },
+            "required": ["file", "src_in"],
+        },
     },
     {
         "name": "list_zooms",
@@ -2392,7 +2410,7 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
         applied.append({"type": "job_rerendering", "job_id": job_id, "changes": changes})
         return {"ok": True, "changes": changes, "rerendering": True}
 
-    if tool_name in ("list_broll", "add_broll", "remove_broll", "reset_broll", "set_photo_style"):
+    if tool_name in ("list_broll", "add_broll", "remove_broll", "reset_broll", "set_broll_span", "set_photo_style"):
         if not job_id:
             return {"error": "No job context"}
         job_path = JOBS_DIR / f"{job_id}.json"
@@ -2409,6 +2427,7 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
                 "current_broll_in_video": job.get("broll_last", []),
                 "your_manual_additions":  job.get("broll_add", []),
                 "your_removals":          job.get("broll_remove", []),
+                "your_trims":             job.get("broll_trims", []),
                 "available_clips": choices,
             }
 
@@ -2453,9 +2472,50 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             return {"ok": True, "removed": fname, "was_manual": before != len(job.get("broll_add", [])),
                     "rerendering": True}
 
+        if tool_name == "set_broll_span":
+            fname = Path(tool_input.get("file", "")).name
+            if not fname:
+                return {"error": "Need the clip 'file' to trim"}
+            _names, _ = _broll_choices(client_id, client_name)
+            if fname not in _names:
+                return {"error": f"Clip '{fname}' is not in this client's B-roll library or Drive folder"}
+            if Path(fname).suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif"):
+                return {"error": "That clip is a photo/still — in/out points only apply to video clips"}
+            try:
+                src_in = max(0.0, float(tool_input.get("src_in")))
+            except (TypeError, ValueError):
+                return {"error": "src_in must be a number of seconds"}
+            src_out = tool_input.get("src_out")
+            if src_out is not None:
+                try:
+                    src_out = float(src_out)
+                except (TypeError, ValueError):
+                    return {"error": "src_out must be a number of seconds"}
+                if src_out <= src_in:
+                    return {"error": "src_out must be greater than src_in"}
+            trim = {"file": fname, "src_in": round(src_in, 3)}
+            if src_out is not None:
+                trim["src_out"] = round(src_out, 3)
+            at_sec = tool_input.get("at_sec")
+            if at_sec is not None:
+                try:
+                    trim["at_sec"] = float(at_sec)
+                except (TypeError, ValueError):
+                    pass
+            trims = job.get("broll_trims", [])
+            # overwrite an existing span for the same clip (+ placement) rather than stack
+            job["broll_trims"] = [t for t in trims
+                                  if not (Path(t.get("file", "")).name == fname
+                                          and t.get("at_sec") == trim.get("at_sec"))]
+            job["broll_trims"].append(trim)
+            _rerender_job(job, job_id)
+            applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"broll_trimmed": trim}})
+            return {"ok": True, "trim": trim, "rerendering": True}
+
         if tool_name == "reset_broll":
             job.pop("broll_add", None)
             job.pop("broll_remove", None)
+            job.pop("broll_trims", None)
             _rerender_job(job, job_id)
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"broll": "reset to auto-match"}})
             return {"ok": True, "rerendering": True}

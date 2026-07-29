@@ -602,6 +602,49 @@ def _extract_frame(video: Path, out_jpg: Path, t: float | None = None):
     subprocess.run(args, check=True, timeout=60)
 
 
+def _detect_active_span(clip: Path, dur: float):
+    """Find the ACTIVE (moving) window of a b-roll video via a cheap local motion
+    pass, so a cutaway uses the action instead of idle head/tail padding (e.g. a
+    training clip that opens on 20s of sitting still). Returns (in_s, out_s) or
+    None when there is no clear active region (caller then uses the whole clip).
+    Never raises."""
+    if not dur or dur <= 0:
+        return None
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(clip), "-an",
+             "-vf", "scale=64:64,format=gray,tblend=all_mode=difference,signalstats,metadata=print:file=-",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=90)
+        out = r.stdout or ""
+    except Exception:
+        return None
+    series, cur_t = [], None                       # (t, motion), higher = more movement
+    for line in out.splitlines():
+        m = re.search(r"pts_time:([0-9.]+)", line)
+        if m:
+            cur_t = float(m.group(1)); continue
+        m = re.search(r"lavfi\.signalstats\.YAVG=([0-9.]+)", line)
+        if m and cur_t is not None:
+            series.append((cur_t, float(m.group(1)))); cur_t = None
+    if len(series) < 8:
+        return None
+    vals = sorted(v for _, v in series)
+    n = len(vals); median = vals[n // 2]
+    mad = (sorted(abs(v - median) for v in vals)[n // 2]) or 1.0
+    thresh = median + 3.0 * mad                     # sustained motion, not flicker
+    active = [t for t, v in series if v >= thresh]
+    if not active:
+        return None
+    a_in, a_out = max(0.0, min(active) - 0.3), min(dur, max(active) + 0.3)
+    if a_out - a_in < 3.5:                          # too short -> widen around its centre
+        c = (a_in + a_out) / 2.0
+        a_in, a_out = max(0.0, c - 1.75), min(dur, c + 1.75)
+    if a_out <= a_in or a_out - a_in < 1.2:
+        return None
+    return (round(a_in, 2), round(a_out, 2))
+
+
 def _broll_tag_key(clip: Path) -> str:
     st = clip.stat()
     return f"{clip.name}:{st.st_size}:{int(st.st_mtime)}"
@@ -645,6 +688,7 @@ def tag_broll_clips(broll_src: Path, clips: list, anthropic_key: str, log_fn, ca
             continue
         try:
             frame = tmp / f"{clip.stem}.jpg"
+            _span = None
             # _extract_frame with no seek converts ANY still (jpg/png/webp/heic) to a
             # small jpeg too, so pictures are analysed exactly like a video frame.
             if _is_broll_image(clip):
@@ -659,7 +703,9 @@ def tag_broll_clips(broll_src: Path, clips: list, anthropic_key: str, log_fn, ca
                     dur = float(r.stdout.strip() or 0.0)
                 except Exception:
                     pass
-                _extract_frame(clip, frame, t=min(1.0, dur/2) if dur else None)
+                _span = _detect_active_span(clip, dur)   # the moving part of the clip
+                _ft = ((_span[0] + _span[1]) / 2.0) if _span else (min(1.0, dur/2) if dur else None)
+                _extract_frame(clip, frame, t=_ft)       # describe the ACTION, not the idle head
                 subject = "This is a frame from a B-roll video clip."
             b64 = base64.standard_b64encode(frame.read_bytes()).decode()
             resp = sdk.messages.create(
@@ -677,6 +723,8 @@ def tag_broll_clips(broll_src: Path, clips: list, anthropic_key: str, log_fn, ca
             m = re.search(r'\{.*\}', raw, re.DOTALL)
             info = json.loads(m.group()) if m else {"description": "", "keywords": []}
             info["keywords"] = [str(k).lower().strip() for k in info.get("keywords", []) if str(k).strip()]
+            if _span:
+                info["active_in"], info["active_out"] = _span   # cached with the clip's tags
             tags[clip.name] = info
             cache[key] = info
             log_fn(f"broll tag: {clip.name} — {info.get('description','')[:70]}")
@@ -1817,6 +1865,11 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                     seg_i = max((i for i, off in enumerate(edl_off) if off <= t), default=0)
                     dur = max(1.5, min(3.5, float(p.get("duration_sec", 2.5))))
                     is_img = _is_broll_image(fname)
+                    _tg = tags.get(fname) or {}
+                    _ain  = float(_tg.get("active_in", 0.0) or 0.0)
+                    _aout = float(_tg.get("active_out", 0.0) or 0.0)
+                    if not is_img and _aout > _ain:          # keep the cutaway inside the action
+                        dur = max(1.2, min(dur, _aout - _ain))
                     mode = "full"
                     if is_img:
                         mode = str(p.get("style", "full") or "full").lower()
@@ -1834,6 +1887,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                     if is_img:
                         entry["is_image"] = True
                         entry["mode"] = mode
+                    else:
+                        entry["src_in"] = round(max(0.0, _ain), 3)   # start the clip at the action
                     broll_entries.append(entry)
                     placed_ts.append(t)
                     summ = {"file": fname, "at_sec": round(t, 1),
@@ -1894,30 +1949,43 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         # shorter and the pre-decay beat-zoom times drift late (and trailing ones
         # can fall off the new end). Re-place them on the decayed ranges so each
         # zoom lands on its real beat. Only for cleanly auto-placed zooms.
-        if _reanchor_zoom:
-            try:
-                _de   = json.loads((project_dir / "edl.json").read_text())
-                _tot2 = sum(r["end"] - r["start"] for r in _de["ranges"]) or 0.0
-                _ev2  = _beat_zoom_events(_de["ranges"], _tot2,
-                                          _profile_zoom_meta["cpm"], _profile_zoom_meta["zi"])
-                _clamped = []
-                for e in _ev2:
-                    at  = min(float(e["at"]), max(0.0, _tot2 - 0.5))
-                    dur = max(0.8, min(6.0, min(float(e["duration"]), max(0.8, _tot2 - at))))
-                    strg = max(0.06, min(0.30, float(e["strength"])))
-                    _clamped.append({"at": round(at, 2), "duration": round(dur, 2), "strength": round(strg, 3)})
-                if _clamped:
-                    _de["zooms"] = _clamped
-                else:
-                    _de.pop("zooms", None)
-                (project_dir / "edl.json").write_text(json.dumps(_de, indent=2))
-                _jr = json.loads(job_path.read_text())
-                _jr["zoom_last"] = _clamped
-                _jr["output_duration"] = round(_tot2, 2)
-                job_path.write_text(json.dumps(_jr, indent=2))
-                _log(job_path, f"Zoom: re-anchored {len(_clamped)} beat zoom(s) to the tightened cut")
-            except Exception as _e:
-                _log(job_path, f"Zoom: re-anchor skipped ({_e}) — using pre-decay placement")
+        # ALWAYS reconcile zooms + output_duration to the POST-decay timeline, which
+        # is the timeline compose actually renders. Auto beat zooms are recomputed on
+        # the tightened cut; MANUAL/chat zooms keep the user's exact times and are only
+        # clamped (do NOT re-map them — the editor already places them on the real
+        # post-decay video). Writing output_duration as the true final length is what
+        # makes the editor's ruler match the video, fixing the marker-vs-zoom drift.
+        try:
+            _de   = json.loads((project_dir / "edl.json").read_text())
+            _tot2 = sum(r["end"] - r["start"] for r in _de["ranges"]) or 0.0
+            if _reanchor_zoom:
+                _src = _beat_zoom_events(_de["ranges"], _tot2,
+                                         _profile_zoom_meta["cpm"], _profile_zoom_meta["zi"])
+            else:
+                _src = _de.get("zooms", [])      # keep the user's manual/chat zoom times
+            _clamped = []
+            for e in _src:
+                try:
+                    at = min(float(e["at"]), max(0.0, _tot2 - 0.5))
+                except (TypeError, ValueError):
+                    continue
+                if at < 0:
+                    continue
+                dur = max(0.8, min(6.0, min(float(e.get("duration", 2.5)), max(0.8, _tot2 - at))))
+                strg = max(0.06, min(0.30, float(e.get("strength", 0.12))))
+                _clamped.append({"at": round(at, 2), "duration": round(dur, 2), "strength": round(strg, 3)})
+            if _clamped:
+                _de["zooms"] = _clamped
+            else:
+                _de.pop("zooms", None)
+            (project_dir / "edl.json").write_text(json.dumps(_de, indent=2))
+            _jr = json.loads(job_path.read_text())
+            _jr["zoom_last"] = _clamped
+            _jr["output_duration"] = round(_tot2, 2)
+            job_path.write_text(json.dumps(_jr, indent=2))
+            _log(job_path, f"Zoom/length: reconciled to post-decay — {len(_clamped)} zoom(s), {_tot2:.1f}s")
+        except Exception as _e:
+            _log(job_path, f"Zoom/length post-decay reconcile skipped ({_e})")
 
         # ── 5a2. Resolve on-screen graphics on the TIGHTENED timeline ──────────
         # Anchor each planned card/stat/lower-third to its spoken moment using the
@@ -1972,6 +2040,39 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 (project_dir / "edl.json").write_text(json.dumps(_dm, indent=2))
             except Exception as _e:
                 _log(job_path, f"Studio moves skipped ({_e})")
+
+        # Chat "use clip X from 10s to 15s": stamp the source in/out onto matching b-roll
+        # entries (by filename + optional at_sec). LAST b-roll mutation so an explicit span
+        # wins over auto placement AND Studio drags. Photos are skipped.
+        _btrims = job.get("broll_trims") or []
+        if _btrims:
+            try:
+                _dm = json.loads((project_dir / "edl.json").read_text())
+                _imgs = (".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif")
+                _n = 0
+                for _en in _dm.get("broll", []):
+                    if _en.get("is_image") or Path(str(_en.get("file", ""))).suffix.lower() in _imgs:
+                        continue
+                    _enm = Path(str(_en.get("file", ""))).name.lower()
+                    _eat = _en.get("at_sec")
+                    if _eat is None:
+                        _eat = float(_en.get("start_in_output", 0) or 0) + float(_en.get("delay", 0) or 0)
+                    for _t in _btrims:
+                        if Path(str(_t.get("file", ""))).name.lower() != _enm:
+                            continue
+                        if _t.get("at_sec") is not None and abs(float(_t["at_sec"]) - float(_eat)) > 0.75:
+                            continue
+                        _en["src_in"] = round(max(0.0, float(_t.get("src_in", 0.0))), 3)
+                        if _t.get("src_out") is not None:
+                            _en["src_out"] = round(float(_t["src_out"]), 3)
+                            _en["duration"] = max(0.5, min(12.0, _en["src_out"] - _en["src_in"]))
+                        _n += 1
+                        break
+                (project_dir / "edl.json").write_text(json.dumps(_dm, indent=2))
+                if _n:
+                    _log(job_path, f"Studio/chat: {_n} b-roll source span(s) applied")
+            except Exception as _e:
+                _log(job_path, f"B-roll trims skipped ({_e})")
 
         # ── 6. Compose ─────────────────────────────────────────────────────────
         _log(job_path, "Rendering — normalize → concat → overlays → loudnorm (this takes a while)...")

@@ -114,7 +114,8 @@
   .cutband .gr{position:absolute;top:0;bottom:0;width:9px;background:var(--danger);cursor:ew-resize}
   .cutband .gr.l{left:-1px;border-radius:6px 0 0 6px}.cutband .gr.r{right:-1px;border-radius:0 6px 6px 0}
   .cutmask{position:absolute;top:7px;bottom:7px;background:repeating-linear-gradient(45deg,rgba(251,113,133,.35),rgba(251,113,133,.35) 5px,rgba(251,113,133,.15) 5px,rgba(251,113,133,.15) 10px);border-radius:5px;z-index:2;pointer-events:none}
-  .zoom-mk{position:absolute;top:50%;width:15px;height:15px;background:var(--zoom);border-radius:3px;cursor:pointer;transform:translate(-50%,-50%) rotate(45deg);box-shadow:0 2px 8px rgba(251,191,36,.5)}
+  .zoom-mk{position:absolute;top:50%;width:15px;height:15px;background:var(--zoom);border-radius:3px;cursor:grab;touch-action:none;user-select:none;transform:translate(-50%,-50%) rotate(45deg);box-shadow:0 2px 8px rgba(251,191,36,.5)}
+  .zoom-mk.drag{cursor:grabbing;filter:brightness(1.15);transform:translate(-50%,-50%) rotate(45deg) scale(1.18)}
   .playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--cyan);z-index:6;box-shadow:0 0 10px rgba(70,200,255,.7);pointer-events:none}
   .playhead::before{content:"";position:absolute;top:-9px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:11px solid var(--cyan);filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
   /* grab the WHOLE pin, top to bottom, not just a tiny nub */
@@ -220,7 +221,7 @@
     </div>
 
     <section class="tl">
-      <div class="tl-tools"><span class="lab" id="tlDur">00:00</span><span class="hint">Video: trim · Captions: edit text · B-roll &amp; Graphics: drag to move · Zooms: click to add/remove</span></div>
+      <div class="tl-tools"><span class="lab" id="tlDur">00:00</span><span class="hint">Video: trim · Captions: edit text · B-roll &amp; Graphics: drag to move · Zooms: click to add, drag to move, double-click to remove</span></div>
       <div class="tl-scroll"><div class="tl-inner" id="tlInner">
         <div class="ruler" id="ruler"></div>
         <div class="lane"><div class="name"><span class="k" style="background:#5a6188"></span>Video</div><div class="track" id="tVideo"></div></div>
@@ -417,9 +418,29 @@
     S.graphics.forEach(function(g,i){var b=document.createElement('div');b.className='blk gfx';b.style.left=pct(g.start_sec||0)+'%';b.style.width=Math.max(4,pct(g.duration_sec||3))+'%';b.textContent=g.template;b.dataset.i=i;dragBlock(b,'gfx',i);tg.appendChild(b);});
     renderZooms();
   }
-  function renderZooms(){var tz=$('tZoom');tz.innerHTML='';if(!S.zooms.length)tz.innerHTML='<span class="empty">none — click track to add</span>';
-    S.zooms.forEach(function(z,i){var m=document.createElement('div');m.className='zoom-mk';m.style.left=pct(z.at)+'%';m.title='+'+Math.round(z.strength*100)+'% at '+fmt(z.at);m.addEventListener('click',function(e){e.stopPropagation();S.zooms.splice(i,1);renderZooms();dirty();toast('Zoom removed');});tz.appendChild(m);});
-    tz.onclick=function(e){var r=tz.getBoundingClientRect();var at=(e.clientX-r.left)/r.width*S.dur;if(at<0.2||at>S.dur-0.2)return;S.zooms.push({at:Math.round(at*10)/10,duration:2.2,strength:0.11});S.zooms.sort(function(a,b){return a.at-b.at;});renderZooms();dirty();toast('Zoom added');};}
+  var _zoomDragged=false;
+  function renderZooms(){var tz=$('tZoom');tz.innerHTML='';if(!S.zooms.length)tz.innerHTML='<span class="empty">none — click track to add, drag to move, double-click to remove</span>';
+    S.zooms.forEach(function(z,i){
+      var m=document.createElement('div');m.className='zoom-mk';m.style.left=pct(z.at)+'%';
+      m.title='+'+Math.round(z.strength*100)+'% at '+fmt(z.at)+' — drag to move, double-click to remove';
+      m.addEventListener('click',function(e){e.stopPropagation();});   // don't fall through to add
+      m.addEventListener('dblclick',function(e){e.stopPropagation();S.zooms.splice(i,1);renderZooms();dirty();toast('Zoom removed');});
+      m.addEventListener('pointerdown',function(e){
+        if(e.button!==0)return;e.preventDefault();e.stopPropagation();
+        var r=tz.getBoundingClientRect(),startX=e.clientX,moved=false;m.classList.add('drag');
+        function mv(ev){if(!moved&&Math.abs(ev.clientX-startX)<3)return;moved=true;
+          var at=Math.max(0,Math.min(S.dur,(ev.clientX-r.left)/r.width*S.dur));
+          z.at=Math.round(at*10)/10;m.style.left=pct(z.at)+'%';m.title='+'+Math.round(z.strength*100)+'% at '+fmt(z.at);}
+        function up(){window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);m.classList.remove('drag');
+          if(moved){_zoomDragged=true;S.zooms.sort(function(a,b){return a.at-b.at;});renderZooms();dirty();toast('Zoom moved to '+fmt(z.at));}}
+        window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
+      });
+      tz.appendChild(m);
+    });
+    tz.onclick=function(e){
+      if(_zoomDragged){_zoomDragged=false;return;}   // ignore the synthetic click right after a drag
+      var r=tz.getBoundingClientRect();var at=(e.clientX-r.left)/r.width*S.dur;if(at<0.2||at>S.dur-0.2)return;
+      S.zooms.push({at:Math.round(at*10)/10,duration:2.2,strength:0.11});S.zooms.sort(function(a,b){return a.at-b.at;});renderZooms();dirty();toast('Zoom added');};}
 
   // ---- drag a b-roll / graphics block along its lane ----
   function dragBlock(el,kind,i){

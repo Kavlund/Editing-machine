@@ -194,7 +194,10 @@ def overlay(edit, edl, base, out, starts, durs):
         if is_img:
             inputs += ["-loop", "1", "-t", f"{max(0.3, e - s + 0.2):.3f}", "-i", p]
         else:
-            inputs += ["-i", p]
+            # start the clip at its ACTIVE moment (src_in); the setpts below resets PTS
+            # to 0 so it still lands at output time s.
+            src_in = float(b.get("src_in", 0.0) or 0.0)
+            inputs += (["-ss", f"{src_in:.3f}"] if src_in > 0 else []) + ["-i", p]
 
     # Remotion graphic overlays (cards / stats / lower-thirds): each is a transparent
     # clip placed at its own start_sec for its own length. Composited ABOVE b-roll,
