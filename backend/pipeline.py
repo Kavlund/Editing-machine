@@ -353,28 +353,29 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         )
     graphics_rules = (
         "\n- graphics: OPTIONAL on-screen motion-graphic cards, each anchored to a spoken moment by an EXACT "
-        "short quote from the transcript. Add them ONLY where they genuinely add value — 0 to 3 per video, "
-        "NEVER on every line. Pick the right template:\n"
-        "  * ListCard — the speaker enumerates a short list of points/steps/tips. "
+        "short quote from the transcript. DEFAULT TO NONE. Most good videos have 0 to 1; a genuinely busy one "
+        "at most 2. Add a graphic ONLY when that exact moment is clearly stronger with it on screen — never add "
+        "one just because a template could fit, never put one on every line, and never stack two back to back. "
+        "When in doubt, leave it out. Use a template ONLY when its trigger below is clearly met:\n"
+        "  * ListCard — ONLY when the speaker explicitly enumerates a short list of points/steps/tips. "
         'props: {"title": "optional short header or omit", "items": ["2-5 SHORT lines, 2-5 words each"]}.\n'
-        "  * Stat — the speaker states one striking number/metric. "
+        "  * Stat — ONLY when the speaker states one striking number/metric worth spotlighting. "
         'props: {"value": "90%" or "10x" or "$1.4B", "label": "short caption of what it means"}.\n'
-        "  * LowerThird — identify a person or brand by name. "
+        "  * LowerThird — ONLY to name a person or brand, the first time they are introduced. "
         'props: {"name": "the name", "subtitle": "role or tagline"}.\n'
-        "  * QuoteCard — spotlight ONE memorable sentence the speaker says, as a pull-quote. "
+        "  * QuoteCard — ONLY for ONE genuinely memorable line, at most once in the whole video. "
         'props: {"quote": "the sentence in normal sentence case", "attribution": "who said it, or omit"}.\n'
-        "  * Comparison — contrast two sides (before vs after, myth vs truth, X vs Y). "
+        "  * Comparison — ONLY when the speaker explicitly contrasts two sides (before vs after, myth vs truth). "
         'props: {"leftLabel": "MYTH or BEFORE", "leftText": "short", "rightLabel": "TRUTH or AFTER", "rightText": "short"}.\n'
-        "  * SubscribePrompt — a follow/subscribe call to action. Use SPARINGLY: at most ONCE per video, "
-        "normally near the end, and ONLY if the speaker actually asks viewers to follow or subscribe. "
+        "  * SubscribePrompt — ONLY if the speaker actually asks viewers to follow/subscribe; at most ONCE, on that ask. "
         'props: {"text": "SUBSCRIBE" or "FOLLOW", "handle": "@handle or omit"}.\n'
-        "  * Callout — punch ONE short spoken phrase onto the screen as kinetic emphasis text (3-6 words). "
+        "  * Callout — ONLY to punch ONE short, quotable spoken phrase (3-6 words) that truly deserves emphasis. Rare. "
         'props: {"text": "the exact short phrase, in the transcript language"}.\n'
-        "  * Counter — the speaker states a number that hits harder counting up (followers, revenue, %, days). "
+        "  * Counter — ONLY when a specific number lands harder counting up (followers, revenue, %, days). "
         'props: {"value": "10,000" or "87%" or "$1.4B", "label": "short caption of what it counts"}.\n'
-        "  * Emphasis — a marker-style draw-on that circles, underlines, or points at the key spot on screen. "
+        "  * Emphasis — ONLY to circle / underline / point at ONE specific thing the speaker calls out on screen. "
         'props: {"mode": "circle" or "underline" or "arrow", "cx": 0.5, "cy": 0.5}  // cx,cy = 0..1 position on the frame.\n'
-        "  Write the props text in the SAME language as the transcript. duration_sec 2.5-4. If nothing fits, [].\n"
+        "  Write the props text in the SAME language as the transcript. duration_sec 2.5-4. If nothing clearly fits, [].\n"
         + _lot_rule
     ) if graphics_on else ""
 
@@ -492,7 +493,7 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                         dur, at = 3.0, 0.0
                     gs.append({"template": t, "quote": str(g.get("quote", "")).strip(),
                                "at_sec": at, "duration_sec": dur, "props": props})
-                plan["graphics"] = gs[:3]   # never carpet the video with cards
+                plan["graphics"] = gs[:2]   # hard cap: never carpet the video with cards
         log_fn(f"AI plan: hook={'yes' if plan['hook'] else 'no'}, "
                f"{len(plan['keywords'])} keyword(s), zoom={plan['zoom']['enabled']}, "
                f"{len(plan['zoom_events'])} timed zoom(s), {len(plan['graphics'])} graphic(s)")
@@ -1284,6 +1285,11 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
                        or _color_to_hex(style.get("caption_highlight_color"))
                        or editing.get("highlight_color", "")
                        or accent_color or "")
+    # Motion-graphic accent: default to the client's CHOSEN brand colour (never a
+    # generic gold/white) so subscribe buttons, callouts, counters and highlights
+    # come out on-brand. accent -> primary -> caption colour. Editor overrides per video.
+    graphics_color = (accent_color or brand.get("primary_color", "")
+                      or caption_color or "#ffffff")
 
     edl: dict = {
         "version": 1,
@@ -1311,6 +1317,7 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
         "zoom_enabled":  zoom_enabled,
         "zoom_strength": zoom_strength,
         "brand":         brand,
+        "graphics_color": graphics_color,   # client's brand colour for motion graphics
     }
 
     # Transitions: if the reference fades in/out (rather than hard-cutting), carry a
@@ -1678,6 +1685,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         if overrides:
             if "grade" in overrides:
                 edl["grade"] = overrides["grade"]
+            if overrides.get("graphics_color"):        # editor set a per-video graphics colour
+                edl["graphics_color"] = overrides["graphics_color"]
             caps = edl.setdefault("style", {}).setdefault("captions", {})
             for ok, ek in [("caption_y","y"),("caption_font_size","font_size"),
                            ("caption_color","color"),("highlight_color","highlight_color"),

@@ -542,7 +542,9 @@ def build_graphics(edit, edl):
     if out_dir.exists(): shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
     brand  = edl.get("brand", {})
-    accent = brand.get("accent_color") or "#ffffff"
+    # The client's chosen brand colour (resolved in _auto_edl, overridable per video
+    # from the Studio editor). Falls back to the raw brand accent, then white.
+    accent = edl.get("graphics_color") or brand.get("accent_color") or "#ffffff"
     for i, g in enumerate(graphics):
         tmpl = g.get("template")
         if not tmpl:

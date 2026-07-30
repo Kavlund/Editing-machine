@@ -1627,6 +1627,8 @@ def get_studio(job_id: str):
         "caption_text_overrides": job.get("caption_text_overrides", []),
         "caption_color_overrides": job.get("caption_color_overrides", []),
         "brand_colors":  _brand_colors_for_job(job),   # default swatches from client onboarding
+        "graphics_color": (job.get("job_overrides", {}).get("graphics_color")
+                           or (_brand_colors_for_job(job) or [""])[0] or ""),  # current motion-graphics colour
         "graphics_override":      job.get("graphics_override"),
         "broll_override":         job.get("broll_override"),
         "zooms":        job.get("zoom_add") if job.get("zoom_manual") else job.get("zoom_last", []),
@@ -1659,6 +1661,14 @@ async def save_studio(job_id: str, request: Request):
                 ov[k] = cap[k]
     if "grade" in body:
         ov["grade"] = body["grade"]
+    # Motion-graphics colour -> job_overrides (validated hex; applies to every graphic
+    # in this video). Empty/blank clears back to the client's brand default.
+    if "graphics_color" in body:
+        _gh = _norm_hex(body.get("graphics_color"))
+        if _gh:
+            ov["graphics_color"] = _gh
+        else:
+            ov.pop("graphics_color", None)
 
     # Title card -> job_overrides (per-video edit / delete / restyle)
     tt = body.get("title")
