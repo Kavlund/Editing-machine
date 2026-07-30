@@ -285,7 +285,11 @@ def _interpret_directives(spec: str, anthropic_key: str, log_fn) -> dict:
 
 # The graphic templates the Remotion engine can render (Hook is handled separately).
 _GRAPHIC_TEMPLATES = ("ListCard", "Stat", "LowerThird", "QuoteCard", "Comparison",
-                      "SubscribePrompt", "Callout", "Counter", "Emphasis", "Lottie")
+                      "SubscribePrompt", "Callout", "Counter", "Emphasis",
+                      "Steps", "Checklist", "ProgressBar", "KeyTakeaway", "Definition",
+                      "Warning", "PriceCard", "Testimonial", "Countdown", "Divider",
+                      "QuestionCard", "SharePrompt", "SwipeUp", "CommentPrompt", "SaveThis",
+                      "Lottie")
 
 
 def _lottie_catalog() -> list:
@@ -339,7 +343,7 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
     _lot = _lottie_catalog() if graphics_on else []
     graphics_schema = (
         ',\n  "graphics": [   // OPTIONAL on-screen cards; add 0-3 only where they clearly help\n'
-        '    {"template": "ListCard|Stat|LowerThird|QuoteCard|Comparison|SubscribePrompt|Callout|Counter|Emphasis' + ("|Lottie" if _lot else "") + '", "quote": "2-5 word EXACT phrase from the transcript where it appears", "duration_sec": 3.0, "props": { }}\n'
+        '    {"template": "one of the template names listed in the graphics rules below", "quote": "2-5 word EXACT phrase from the transcript where it appears", "duration_sec": 3.0, "props": { }}\n'
         '  ]'
     ) if graphics_on else ""
     _lot_rule = ""
@@ -375,6 +379,36 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         'props: {"value": "10,000" or "87%" or "$1.4B", "label": "short caption of what it counts"}.\n'
         "  * Emphasis — ONLY to circle / underline / point at ONE specific thing the speaker calls out on screen. "
         'props: {"mode": "circle" or "underline" or "arrow", "cx": 0.5, "cy": 0.5}  // cx,cy = 0..1 position on the frame.\n'
+        "  * Steps — ONLY when the speaker lays out an ordered process (first, then, finally). "
+        'props: {"title": "optional", "steps": ["2-4 short ordered steps"]}.\n'
+        "  * Checklist — ONLY for a short set of must-do / must-have items to tick off. "
+        'props: {"title": "optional", "items": ["2-5 short items"]}.\n'
+        "  * ProgressBar — ONLY when a single proportion or percentage is the point (a share, a completion rate). "
+        'props: {"label": "what it measures", "value": "72%" or "7/10", "caption": "optional note"}.\n'
+        "  * KeyTakeaway — ONLY to lock in the ONE thing to remember; at most once. "
+        'props: {"label": "optional, defaults KEY TAKEAWAY", "text": "the one line"}.\n'
+        "  * Definition — ONLY when the speaker defines a term or piece of jargon. "
+        'props: {"term": "the term", "definition": "a short plain explanation"}.\n'
+        "  * Warning — ONLY to flag a mistake or thing to avoid. "
+        'props: {"label": "optional, defaults WATCH OUT", "text": "the pitfall, short"}.\n'
+        "  * PriceCard — ONLY when a price or offer is stated. "
+        'props: {"price": "$49", "was": "optional old price", "label": "optional e.g. TODAY ONLY", "cta": "optional"}.\n'
+        "  * Testimonial — ONLY for a customer or result quote used as social proof. "
+        'props: {"quote": "short quote", "name": "optional", "role": "optional", "stars": 5}.\n'
+        "  * Countdown — ONLY for genuine urgency or a deadline the speaker states. "
+        'props: {"label": "optional e.g. ENDS IN", "value": "24:00:00" or "3 DAYS"}.\n'
+        "  * Divider — ONLY to mark a clear new section or chapter of the video. "
+        'props: {"text": "the section title", "kicker": "optional e.g. PART 2"}.\n'
+        "  * QuestionCard — ONLY to put a direct question to the viewer on screen. "
+        'props: {"question": "the question"}.\n'
+        "  * SharePrompt — ONLY for a generic like/comment/share nudge (a specific subscribe ask uses SubscribePrompt instead). At most once. "
+        'props: {"text": "optional", "handle": "@handle or omit"}.\n'
+        "  * SwipeUp — ONLY when pointing to a link in bio or swipe up. At most once. "
+        'props: {"text": "optional, defaults LINK IN BIO"}.\n'
+        "  * CommentPrompt — ONLY when the speaker asks viewers to comment a specific word. "
+        'props: {"word": "the word to comment, e.g. YES"}.\n'
+        "  * SaveThis — ONLY when the content is a reference worth saving. At most once. "
+        'props: {"text": "optional, defaults SAVE THIS"}.\n'
         "  Write the props text in the SAME language as the transcript. duration_sec 2.5-4. If nothing clearly fits, [].\n"
         + _lot_rule
     ) if graphics_on else ""

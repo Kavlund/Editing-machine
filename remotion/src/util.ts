@@ -20,6 +20,42 @@ export function readableAccent(hex?: string): string {
   return `#${hx(r)}${hx(g)}${hx(b)}`;
 }
 
+// Lighten (amt > 0, toward white) or darken (amt < 0, toward black) a hex colour
+// by |amt| in [0,1]. Used to build a coherent, on-brand monochrome scheme from the
+// client's single accent, so every template has depth without a clashing 2nd colour.
+export function shade(hex: string, amt: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec((hex || "").trim());
+  if (!m) return hex || "#888888";
+  const n = parseInt(m[1], 16);
+  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const t = Math.max(-1, Math.min(1, amt));
+  const to = t >= 0 ? 255 : 0;
+  const k = Math.abs(t);
+  r = Math.round(r + (to - r) * k);
+  g = Math.round(g + (to - g) * k);
+  b = Math.round(b + (to - b) * k);
+  const hx = (v: number) => v.toString(16).padStart(2, "0");
+  return `#${hx(r)}${hx(g)}${hx(b)}`;
+}
+
+// rgba() string from a hex + alpha — for soft panels/tints over video.
+export function withAlpha(hex: string, a: number): string {
+  const [r, g, b] = hexToRgb01(hex).map((v) => Math.round(v * 255));
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, a))})`;
+}
+
+// The client's SECOND brand colour when they set one (and it differs), else a deeper
+// tone of the primary accent — so a template that wants two tones always stays on brand
+// and never clashes. Both colours come from the client profile via the pipeline.
+export function secondaryAccent(accent?: string, accent2?: string): string {
+  const a = readableAccent(accent);
+  if (accent2 && /^#?[0-9a-fA-F]{6}$/.test((accent2 || "").trim())) {
+    const s = readableAccent(accent2);
+    if (s.toLowerCase() !== a.toLowerCase()) return s;
+  }
+  return shade(a, -0.28);
+}
+
 export function hexToRgb01(hex: string): [number, number, number] {
   const m = /^#?([0-9a-fA-F]{6})$/.exec((hex || "").trim());
   if (!m) return [1, 1, 1];
