@@ -268,6 +268,14 @@
             <div class="clip-actions" style="grid-template-columns:1fr;margin-top:8px"><button class="btn danger" id="gfxDelete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Remove graphic</button></div>
           </div>
 
+          <div class="grp" id="brollEditPanel" style="display:none">
+            <div class="divide"></div>
+            <span class="lab">B-roll: <span id="brollSelName"></span></span>
+            <p class="muted-note" style="margin:2px 0 6px">Drag its block on the B-roll track to move it. Set how long it plays, or remove it.</p>
+            <div class="triml"><span class="lab" style="margin:0">Length</span><input type="number" class="numin" id="brollDur" value="2.5" min="0.5" max="30" step="0.5"><span class="lab" style="margin:0">s</span></div>
+            <div class="clip-actions" style="grid-template-columns:1fr;margin-top:8px"><button class="btn danger" id="brollDelete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Remove b-roll</button></div>
+          </div>
+
           <p class="muted-note" id="hint" style="margin-top:4px">Drag the caption in the preview to move it. Click a Video clip to trim, a caption to edit its text, a graphic to edit it, a zoom to remove. Drag b-roll or graphics blocks to reposition.</p>
         </div>
       </section>
@@ -313,8 +321,8 @@
   function undo(){
     if(!HIST.length){toast('Nothing to undo');return;}
     _pending=null;Object.assign(S,HIST.pop());
-    selClip=-1;editIdx=-1;selGfx=-1;band.a=0;band.b=0;
-    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='none';
+    selClip=-1;editIdx=-1;selGfx=-1;selBroll=-1;band.a=0;band.b=0;
+    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='none';$('brollEditPanel').style.display='none';
     reflectCaption();reflectGfx();renderTimeline();updateLiveCaption($('video').currentTime||0);
     $('save').disabled=(JSON.stringify(cloneEdit(S))===PRISTINE);refreshUndo();toast('Undid last change');
   }
@@ -606,8 +614,8 @@
   ];
   function selectGfx(i){
     if(i<0||i>=S.graphics.length)return;
-    selGfx=i;selClip=-1;editIdx=-1;
-    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='block';
+    selGfx=i;selClip=-1;editIdx=-1;selBroll=-1;
+    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';$('brollEditPanel').style.display='none';$('gfxEditPanel').style.display='block';
     var g=S.graphics[i];
     $('gfxSelName').textContent=g.template;
     $('gfxDur').value=g.duration_sec||3;
@@ -646,6 +654,17 @@
   function deleteGfx(){if(selGfx<0)return;armSnapshot();S.graphics.splice(selGfx,1);selGfx=-1;$('gfxEditPanel').style.display='none';renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);toast('Graphic removed');}
   function openGfxPicker(){var m=$('gfxPicker'),list=$('gfxList');m.style.display='flex';list.innerHTML='';GFX_LIST.forEach(function(it){var el=document.createElement('div');el.className='bclip';el.innerHTML='<div class="bn">'+esc(it.label)+'</div><div class="bs">'+esc(it.id)+'</div>';el.addEventListener('click',function(){addGfxAt(it);});list.appendChild(el);});}
   function addGfxAt(it){armSnapshot();var t=Math.max(0,Math.min((S.dur||1)-1,(_seekTarget!=null?_seekTarget:($('video').currentTime||0))));var g={template:it.id,props:JSON.parse(JSON.stringify(it.def||{})),start_sec:Math.round(t*10)/10,duration_sec:3};S.graphics.push(g);$('gfxPicker').style.display='none';renderTimeline();dirty();selectGfx(S.graphics.length-1);toast('Added '+it.label+' — edit it on the right');}
+  // ---- B-roll select / edit / remove ----
+  var selBroll=-1;
+  function selectBroll(i){
+    if(i<0||i>=S.broll.length)return;
+    selBroll=i;selClip=-1;editIdx=-1;selGfx=-1;
+    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='none';$('brollEditPanel').style.display='block';
+    var b=S.broll[i];$('brollSelName').textContent=(b.file||'clip').split('/').pop();$('brollDur').value=b.duration||2.5;
+    var st=(b.at_sec!=null)?b.at_sec:(b.start_in_output||0),v=$('video');try{v.currentTime=Math.min((S.dur||1e9),st+0.05);}catch(e){}moveHead(st);$('cur').textContent=fmt(st);
+    renderTimeline();
+  }
+  function removeBroll(){if(selBroll<0)return;armSnapshot();S.broll.splice(selBroll,1);selBroll=-1;$('brollEditPanel').style.display='none';renderTimeline();dirty();toast('B-roll removed');}
   function buildBrandSwatches(){
     ['text','hl','gfxcolor','gfxone'].forEach(function(t){
       var row=document.querySelector('.swatches.brand[data-target="'+t+'"]');if(!row)return;row.innerHTML='';
@@ -673,11 +692,11 @@
     // B-ROLL — draggable
     var tb=$('tBroll');tb.innerHTML='';
     if(!S.broll.length)tb.innerHTML='<span class="empty">none</span>';
-    S.broll.forEach(function(x,i){var st=(x.at_sec!=null)?x.at_sec:(x.start_in_output||0);var b=document.createElement('div');b.className='blk broll';b.style.left=pct(st)+'%';b.style.width=Math.max(3,pct(x.duration||2.5))+'%';b.textContent=(x.file||'clip').split('/').pop();b.title=(x.file||'clip').split('/').pop()+' — drag to move, double-click to remove';b.dataset.i=i;dragBlock(b,'broll',i);b.addEventListener('dblclick',function(e){e.stopPropagation();armSnapshot();S.broll.splice(i,1);renderTimeline();dirty();toast('B-roll removed');});tb.appendChild(b);});
+    S.broll.forEach(function(x,i){var st=(x.at_sec!=null)?x.at_sec:(x.start_in_output||0);var b=document.createElement('div');b.className='blk broll'+(i===selBroll?' sel':'');b.style.left=pct(st)+'%';b.style.width=Math.max(3,pct(x.duration||2.5))+'%';b.textContent=(x.file||'clip').split('/').pop();b.title=(x.file||'clip').split('/').pop()+' — click to edit / remove, drag to move';b.dataset.i=i;dragBlock(b,'broll',i,selectBroll);tb.appendChild(b);});
     // GRAPHICS — draggable
     var tg=$('tGfx');tg.innerHTML='';
     if(!S.graphics.length)tg.innerHTML='<span class="empty">none</span>';
-    S.graphics.forEach(function(g,i){var b=document.createElement('div');b.className='blk gfx'+(i===selGfx?' sel':'');b.style.left=pct(g.start_sec||0)+'%';b.style.width=Math.max(4,pct(g.duration_sec||3))+'%';b.textContent=g.template;b.title=g.template+' — click to edit, drag to move';b.dataset.i=i;dragBlock(b,'gfx',i);b.addEventListener('click',function(){selectGfx(i);});tg.appendChild(b);});
+    S.graphics.forEach(function(g,i){var b=document.createElement('div');b.className='blk gfx'+(i===selGfx?' sel':'');b.style.left=pct(g.start_sec||0)+'%';b.style.width=Math.max(4,pct(g.duration_sec||3))+'%';b.textContent=g.template;b.title=g.template+' — click to edit, drag to move';b.dataset.i=i;dragBlock(b,'gfx',i,selectGfx);tg.appendChild(b);});
     renderZooms();
   }
   var _zoomDragged=false;
@@ -705,27 +724,39 @@
       S.zooms.push({at:Math.round(at*10)/10,duration:2.2,strength:0.11});S.zooms.sort(function(a,b){return a.at-b.at;});renderZooms();dirty();toast('Zoom added');};}
 
   // ---- drag a b-roll / graphics block along its lane ----
-  function dragBlock(el,kind,i){
-    el.addEventListener('pointerdown',function(e){if(e.button!==0)return;e.preventDefault();el.classList.add('drag');
-      var track=el.parentElement,r0=track.getBoundingClientRect(),startX=e.clientX,orig=parseFloat(el.style.left);
-      function mv(ev){var dx=(ev.clientX-startX)/r0.width*100;var np=Math.max(0,Math.min(100-parseFloat(el.style.width),orig+dx));el.style.left=np+'%';}
-      function up(ev){window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);el.classList.remove('drag');
-        var np=parseFloat(el.style.left);var at=Math.round(np/100*S.dur*10)/10;
-        if(kind==='broll'){S.broll[i].at_sec=at;delete S.broll[i].start_in_output;} else {S.graphics[i].start_sec=at;}
-        dirty();toast((kind==='broll'?'B-roll':'Graphic')+' moved to '+fmt(at));}
-      window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);});
+  // Tap = select (onTap), drag past a small threshold = move. Crucially we do NOT
+  // preventDefault on pointerdown (that suppresses the follow-up click in browsers),
+  // and a plain tap never counts as a move, so selecting/removing works reliably.
+  function dragBlock(el,kind,i,onTap){
+    el.addEventListener('pointerdown',function(e){
+      if(e.button!==0)return;
+      var track=el.parentElement;if(!track)return;
+      var r0=track.getBoundingClientRect(),startX=e.clientX,startY=e.clientY,orig=parseFloat(el.style.left),moved=false;
+      function mv(ev){
+        if(!moved){if(Math.abs(ev.clientX-startX)<4&&Math.abs(ev.clientY-startY)<4)return;moved=true;el.classList.add('drag');}
+        var dx=(ev.clientX-startX)/r0.width*100,np=Math.max(0,Math.min(100-parseFloat(el.style.width),orig+dx));el.style.left=np+'%';
+      }
+      function up(ev){
+        window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);el.classList.remove('drag');
+        if(moved){var np=parseFloat(el.style.left),at=Math.round(np/100*S.dur*10)/10;
+          if(kind==='broll'){S.broll[i].at_sec=at;delete S.broll[i].start_in_output;}else{S.graphics[i].start_sec=at;}
+          dirty();toast((kind==='broll'?'B-roll':'Graphic')+' moved to '+fmt(at));}
+        else if(onTap){onTap(i);}
+      }
+      window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);
+    });
   }
 
   // ---- caption text edit ----
   var editIdx=-1;
-  function editCaption(i){editIdx=i;selGfx=-1;var c=S.captions[i];$('capTextPanel').style.display='block';$('clipPanel').style.display='none';$('gfxEditPanel').style.display='none';
+  function editCaption(i){editIdx=i;selGfx=-1;selBroll=-1;var c=S.captions[i];$('capTextPanel').style.display='block';$('clipPanel').style.display='none';$('gfxEditPanel').style.display='none';$('brollEditPanel').style.display='none';
     $('capTextInfo').innerHTML='Caption at <b>'+fmt(c.start)+'</b> — edit the words shown on screen';$('capText').value=c.text;$('capText').focus();
     // jump the preview to this caption on the clean proxy so you see your edit live
     swatch('capcolor', S.capColors[norm(c.orig)]||'');
     ensureCleanPreview();var mid=Math.min((S.dur||1e9),c.start+0.05);try{$('video').currentTime=mid;}catch(e){}moveHead(mid);$('cur').textContent=fmt(mid);updateLiveCaption(mid);}
   // ---- video clip trim (cut band) ----
   var selClip=-1, band={a:0,b:0}; // band in output-seconds within the whole timeline
-  function selectClip(i){selClip=i;editIdx=-1;selGfx=-1;$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='none';$('clipPanel').style.display='block';
+  function selectClip(i){selClip=i;editIdx=-1;selGfx=-1;selBroll=-1;$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='none';$('brollEditPanel').style.display='none';$('clipPanel').style.display='block';
     var off=clipOff(i),w=S.ranges[i].end-S.ranges[i].start;band.a=off;band.b=off+w;
     var r=S.ranges[i];$('selinfo').innerHTML='Clip '+(i+1)+' · <b>'+w.toFixed(1)+'s</b> · source '+(r.source||'');renderTimeline();}
   function clipOff(i){var off=0;for(var k=0;k<i;k++)off+=S.ranges[k].end-S.ranges[k].start;return off;}
@@ -754,6 +785,8 @@
     $('gfxOnePick').addEventListener('input',function(){setGfxOne(this.value.toLowerCase());});
     $('gfxOneHex').addEventListener('input',function(){var v=normHex(this.value);if(v)setGfxOne(v);});
     $('gfxOneClear').addEventListener('click',function(){setGfxOne('');$('gfxOneHex').value='';});
+    $('brollDelete').addEventListener('click',removeBroll);
+    $('brollDur').addEventListener('input',function(){if(selBroll<0)return;S.broll[selBroll].duration=Math.max(0.5,Math.min(30,+this.value||2.5));renderTimeline();dirty();});
     window.addEventListener('keydown',function(e){if((e.metaKey||e.ctrlKey)&&(e.key==='z'||e.key==='Z')&&!e.shiftKey){var a=document.activeElement;if(a&&(a.id==='capText'||a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return;e.preventDefault();undo();}});
     $('play').addEventListener('click',function(){var v=$('video');if(v.paused){v.play();$('pico').innerHTML='<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';}else{v.pause();$('pico').innerHTML='<path d="M8 5v14l11-7z"/>';}});
     $('safeToggle').addEventListener('click',function(){this.classList.toggle('on');$('stage').classList.toggle('show-safe');});
