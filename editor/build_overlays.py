@@ -330,6 +330,11 @@ def build_caption_chunks(edit, edl):
             if ch[2].startswith(pre):
                 ch[2] = ch[2][0].upper() + ch[2][1:]
     chunks.sort(key=lambda c: c[0])
+    # Studio "delete caption": drop any caption the editor removed (matched by text),
+    # done BEFORE the hold pass so a survivor holds across the gap the deletion leaves.
+    _rm = {" ".join((t or "").lower().split()) for t in (edl.get("caption_removes") or [])}
+    if _rm:
+        chunks = [c for c in chunks if " ".join(str(c[2]).lower().split()) not in _rm]
     for i in range(len(chunks)-1):                          # hold each caption until the next
         chunks[i][1] = chunks[i+1][0]
     if chunks:

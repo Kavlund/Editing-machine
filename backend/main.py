@@ -1625,6 +1625,7 @@ def get_studio(job_id: str):
         "cut_spans":    job.get("cut_spans", []),
         "split_points": job.get("split_points", []),
         "caption_text_overrides": job.get("caption_text_overrides", []),
+        "caption_removes": job.get("caption_removes", []),
         "caption_color_overrides": job.get("caption_color_overrides", []),
         "brand_colors":  _brand_colors_for_job(job),   # default swatches from client onboarding
         "graphics_color": (job.get("job_overrides", {}).get("graphics_color")
@@ -1708,6 +1709,9 @@ async def save_studio(job_id: str, request: Request):
             if isinstance(e, dict) and str(e.get("from", "")).strip() and str(e.get("to", "")).strip():
                 edits.append({"from": str(e["from"]).strip(), "to": str(e["to"]).strip()})
         job["caption_text_overrides"] = edits
+    # Studio "delete caption": originals to drop from the render (by text)
+    if isinstance(body.get("caption_removes"), list):
+        job["caption_removes"] = [str(t).strip() for t in body["caption_removes"] if str(t).strip()]
 
     # Per-caption COLOR -> [{from, color}] matched by original text at render
     if isinstance(body.get("caption_color_overrides"), list):

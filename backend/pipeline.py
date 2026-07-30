@@ -1365,6 +1365,17 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
     # Only add a title card if the client profile has one configured
     title_cfg = editing.get("title")
     if title_cfg and title_cfg.get("impact_lines"):
+        title_cfg = dict(title_cfg)   # don't mutate the client profile
+        # Title text defaults to the client's BRAND colour (not whatever onboarding set),
+        # lifted toward white if the brand colour is too dark to read. Editor override wins.
+        _tc = (graphics_color or "#ffffff").lstrip("#")
+        try:
+            _n = int(_tc, 16); _r, _g, _b = (_n >> 16) & 255, (_n >> 8) & 255, _n & 255
+            if (0.2126 * _r + 0.7152 * _g + 0.0722 * _b) / 255 < 0.5:
+                _r = round(_r + (255 - _r) * 0.55); _g = round(_g + (255 - _g) * 0.55); _b = round(_b + (255 - _b) * 0.55)
+            title_cfg["color"] = "#%02x%02x%02x" % (_r, _g, _b)
+        except ValueError:
+            title_cfg["color"] = graphics_color
         edl["style"]["title"] = title_cfg
 
     return edl
@@ -1800,6 +1811,9 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         if job.get("caption_text_overrides"):
             edl["caption_overrides"] = job["caption_text_overrides"]
             _log(job_path, f"Studio: {len(job['caption_text_overrides'])} caption text edit(s)")
+        if job.get("caption_removes"):
+            edl["caption_removes"] = job["caption_removes"]
+            _log(job_path, f"Studio: {len(job['caption_removes'])} caption(s) deleted")
         # Studio per-caption COLOR edits: matched by original text, same as text edits.
         if job.get("caption_color_overrides"):
             edl["caption_color_overrides"] = job["caption_color_overrides"]
