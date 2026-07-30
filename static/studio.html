@@ -114,6 +114,7 @@
   .blk.video{background:linear-gradient(180deg,#4a5170,#343a54);color:#dfe3f2;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}.blk.video.sel{box-shadow:0 0 0 2px var(--indigo),0 6px 16px rgba(124,116,255,.35)}
   .blk.cap{background:var(--cap);color:#052a1c}.blk.cap.edited{background:#a78bfa;color:#160a2e}
   .blk.broll{background:var(--broll);color:#04121f;cursor:grab}.blk.gfx{background:var(--gfx);color:#2a0716;cursor:grab}
+  .blk.title{background:#caa63c;color:#2a1e05}
   .blk.drag{cursor:grabbing;filter:brightness(1.12)}
   .cutband{position:absolute;top:4px;bottom:4px;background:rgba(251,113,133,.28);border:1.5px solid var(--danger);border-radius:6px;z-index:4;cursor:move}
   .cutband .gr{position:absolute;top:0;bottom:0;width:9px;background:var(--danger);cursor:ew-resize}
@@ -128,7 +129,7 @@
   .ph-grab:hover{background:rgba(70,200,255,.16)}
   .scrubbing .playhead::before{transform:translateX(-50%) scale(1.15)}
   .empty{color:var(--dim);font-size:11px;position:absolute;left:8px;top:50%;transform:translateY(-50%)}
-  .addbtn{margin-left:auto;width:18px;height:18px;border:none;border-radius:5px;background:rgba(96,165,250,.22);color:#bcd8ff;font-size:15px;line-height:1;cursor:pointer;padding:0}
+  .addbtn{margin-left:auto;width:18px;height:18px;border:none;border-radius:5px;background:rgba(96,165,250,.22);color:#bcd8ff;font-size:15px;line-height:1;cursor:pointer;padding:0;position:relative;z-index:7}
   .addbtn:hover{background:rgba(96,165,250,.4)}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100}
   .modal-card{background:var(--raised-2);border:1px solid var(--border);border-radius:14px;width:min(560px,92vw);max-height:80vh;display:flex;flex-direction:column;overflow:hidden}
@@ -289,6 +290,7 @@
         <div class="lane"><div class="name"><span class="k" style="background:var(--cap)"></span>Captions</div><div class="track" id="tCap"></div></div>
         <div class="lane"><div class="name"><span class="k" style="background:var(--broll)"></span>B-roll<button class="addbtn" id="addBroll" title="Add b-roll from the client's library / Drive">+</button></div><div class="track" id="tBroll"></div></div>
         <div class="lane"><div class="name"><span class="k" style="background:var(--gfx)"></span>Graphics<button class="addbtn" id="addGfx" title="Add a motion graphic at the playhead">+</button></div><div class="track" id="tGfx"></div></div>
+        <div class="lane"><div class="name"><span class="k" style="background:#caa63c"></span>Title</div><div class="track" id="tTitle"></div></div>
         <div class="lane"><div class="name"><span class="k" style="background:var(--zoom)"></span>Zooms</div><div class="track" id="tZoom"></div></div>
         <div class="playhead" id="playhead" style="left:88px"><span class="ph-grab" id="phgrab" title="Drag to scrub"></span></div>
       </div></div>
@@ -545,7 +547,9 @@
   // Jump to a graphic and show it live (clean preview) so it can be seen/coloured.
   function gotoGfx(i){var g=S.graphics[i];if(!g)return;ensureCleanPreview();var s=Math.min((S.dur||1e9),(g.start_sec||0)+0.15),v=$('video');try{v.currentTime=s;}catch(e){}moveHead(s);$('cur').textContent=fmt(s);updateLiveCaption(s);}
   // Touching the title panel: show clean preview and seek into the title window so it's visible.
-  function titleTouched(){ensureCleanPreview();var v=$('video'),dur=(S.title&&S.title.duration!=null?S.title.duration:4.5);if((v.currentTime||0)>dur){try{v.currentTime=1;}catch(e){}moveHead(1);$('cur').textContent=fmt(1);}dirty();updateLiveCaption($('video').currentTime||0);}
+  function showTitle(){ensureCleanPreview();var v=$('video'),dur=(S.title&&S.title.duration!=null?S.title.duration:4.5);if((v.currentTime||0)>dur){try{v.currentTime=1;}catch(e){}moveHead(1);$('cur').textContent=fmt(1);}updateLiveCaption($('video').currentTime||0);}
+  function titleTouched(){showTitle();dirty();renderTimeline();}
+  function openTitleBlock(){var tp=$('titlePanel');if(tp&&tp.scrollIntoView)tp.scrollIntoView({block:'nearest'});showTitle();}
   // When you touch a caption control, swap the burned render for the clean proxy so
   // the live caption is the ONLY caption on screen (true WYSIWYG, no re-render).
   var _cleanNudged=false;
@@ -725,6 +729,14 @@
     var tg=$('tGfx');tg.innerHTML='';
     if(!S.graphics.length)tg.innerHTML='<span class="empty">none</span>';
     S.graphics.forEach(function(g,i){var b=document.createElement('div');b.className='blk gfx'+(i===selGfx?' sel':'');b.style.left=pct(g.start_sec||0)+'%';b.style.width=Math.max(4,pct(g.duration_sec||3))+'%';b.textContent=g.template;b.title=g.template+' — click to edit, drag to move';b.dataset.i=i;dragBlock(b,'gfx',i,selectGfx);tg.appendChild(b);});
+    // TITLE — the intro card block (0 -> its duration)
+    var ttk=$('tTitle');ttk.innerHTML='';
+    if(S.title&&S.title.enabled&&(S.title.text||'').trim()){
+      var tdur=(S.title.duration!=null?S.title.duration:4.5);
+      var tb2=document.createElement('div');tb2.className='blk title';tb2.style.left='0%';tb2.style.width=Math.max(3,pct(tdur))+'%';
+      tb2.textContent=(S.title.text||'Title').split(/[\n|]/)[0];tb2.title='Title card — click to edit';
+      tb2.addEventListener('click',openTitleBlock);ttk.appendChild(tb2);
+    } else { ttk.innerHTML='<span class="empty">none</span>'; }
     renderZooms();
   }
   var _zoomDragged=false;
