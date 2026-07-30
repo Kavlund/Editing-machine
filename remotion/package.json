@@ -5,6 +5,8 @@
   "description": "Code-based, version-controlled motion-graphics templates. The LLM only writes text/props; the animation is fixed and cannot break.",
   "dependencies": {
     "@remotion/cli": "4.0.500",
+    "@remotion/lottie": "4.0.500",
+    "lottie-web": "5.12.2",
     "remotion": "4.0.500",
     "react": "18.3.1",
     "react-dom": "18.3.1"

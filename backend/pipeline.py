@@ -284,7 +284,31 @@ def _interpret_directives(spec: str, anthropic_key: str, log_fn) -> dict:
 
 
 # The graphic templates the Remotion engine can render (Hook is handled separately).
-_GRAPHIC_TEMPLATES = ("ListCard", "Stat", "LowerThird", "QuoteCard", "Comparison")
+_GRAPHIC_TEMPLATES = ("ListCard", "Stat", "LowerThird", "QuoteCard", "Comparison",
+                      "SubscribePrompt", "Callout", "Counter", "Emphasis", "Lottie")
+
+
+def _lottie_catalog() -> list:
+    """The Lottie animation library the model may choose from. Reads the manifest at
+    remotion/public/lottie/index.json -> [{file, description, keywords}]. Empty if none,
+    which omits the Lottie option from the plan entirely (so no file can be invented)."""
+    try:
+        rd = os.environ.get("REMOTION_DIR") or str(Path(__file__).resolve().parent.parent / "remotion")
+        idx = Path(rd) / "public" / "lottie" / "index.json"
+        if not idx.exists():
+            return []
+        data = json.loads(idx.read_text())
+        out = []
+        for fn, meta in (data.items() if isinstance(data, dict) else []):
+            if not str(fn).lower().endswith(".json") or str(fn).lower() == "index.json":
+                continue
+            m = meta if isinstance(meta, dict) else {}
+            out.append({"file": str(fn),
+                        "description": str(m.get("description", "")),
+                        "keywords": [str(k).lower() for k in (m.get("keywords") or [])]})
+        return out
+    except Exception:
+        return []
 
 
 def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
@@ -312,11 +336,21 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
     # Remotion engine enabled — otherwise the model must not propose graphics that
     # cannot render.
     graphics_on = os.environ.get("REMOTION_GRAPHICS") == "1"
+    _lot = _lottie_catalog() if graphics_on else []
     graphics_schema = (
         ',\n  "graphics": [   // OPTIONAL on-screen cards; add 0-3 only where they clearly help\n'
-        '    {"template": "ListCard|Stat|LowerThird", "quote": "2-5 word EXACT phrase from the transcript where it appears", "duration_sec": 3.0, "props": { }}\n'
+        '    {"template": "ListCard|Stat|LowerThird|QuoteCard|Comparison|SubscribePrompt|Callout|Counter|Emphasis' + ("|Lottie" if _lot else "") + '", "quote": "2-5 word EXACT phrase from the transcript where it appears", "duration_sec": 3.0, "props": { }}\n'
         '  ]'
     ) if graphics_on else ""
+    _lot_rule = ""
+    if _lot:
+        _lot_lines = "\n".join(
+            f'      - "{c["file"]}": {c["description"]} (keywords: {", ".join(c["keywords"])})' for c in _lot)
+        _lot_rule = (
+            '  * Lottie — an animated motion graphic from the LIBRARY below; choose ONLY when a file\'s keywords '
+            'clearly match the spoken concept. props: {"file": "<EXACT filename from the LIBRARY>"}.\n'
+            "    LOTTIE LIBRARY (only these files exist):\n" + _lot_lines + "\n"
+        )
     graphics_rules = (
         "\n- graphics: OPTIONAL on-screen motion-graphic cards, each anchored to a spoken moment by an EXACT "
         "short quote from the transcript. Add them ONLY where they genuinely add value — 0 to 3 per video, "
@@ -331,7 +365,17 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         'props: {"quote": "the sentence in normal sentence case", "attribution": "who said it, or omit"}.\n'
         "  * Comparison — contrast two sides (before vs after, myth vs truth, X vs Y). "
         'props: {"leftLabel": "MYTH or BEFORE", "leftText": "short", "rightLabel": "TRUTH or AFTER", "rightText": "short"}.\n'
+        "  * SubscribePrompt — a follow/subscribe call to action. Use SPARINGLY: at most ONCE per video, "
+        "normally near the end, and ONLY if the speaker actually asks viewers to follow or subscribe. "
+        'props: {"text": "SUBSCRIBE" or "FOLLOW", "handle": "@handle or omit"}.\n'
+        "  * Callout — punch ONE short spoken phrase onto the screen as kinetic emphasis text (3-6 words). "
+        'props: {"text": "the exact short phrase, in the transcript language"}.\n'
+        "  * Counter — the speaker states a number that hits harder counting up (followers, revenue, %, days). "
+        'props: {"value": "10,000" or "87%" or "$1.4B", "label": "short caption of what it counts"}.\n'
+        "  * Emphasis — a marker-style draw-on that circles, underlines, or points at the key spot on screen. "
+        'props: {"mode": "circle" or "underline" or "arrow", "cx": 0.5, "cy": 0.5}  // cx,cy = 0..1 position on the frame.\n'
         "  Write the props text in the SAME language as the transcript. duration_sec 2.5-4. If nothing fits, [].\n"
+        + _lot_rule
     ) if graphics_on else ""
 
     # Highest-priority: the client's mandatory specific instructions
@@ -439,6 +483,8 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                     if t not in _GRAPHIC_TEMPLATES:
                         continue
                     props = g.get("props") if isinstance(g.get("props"), dict) else {}
+                    if t == "Lottie" and not any(str(props.get("file", "")).strip() == c["file"] for c in _lot):
+                        continue   # Lottie must name a real library file — never invent one
                     try:
                         dur = max(1.5, min(8.0, float(g.get("duration_sec", 3.0) or 3.0)))
                         at  = float(g.get("at_sec", 0) or 0)

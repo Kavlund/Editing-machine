@@ -6,6 +6,11 @@ import { Stat, StatProps } from "./Stat";
 import { LowerThird, LowerThirdProps } from "./LowerThird";
 import { QuoteCard, QuoteCardProps } from "./QuoteCard";
 import { Comparison, ComparisonProps } from "./Comparison";
+import { Lottie, LottieProps } from "./Lottie";
+import { SubscribePrompt, SubscribePromptProps } from "./SubscribePrompt";
+import { Callout, CalloutProps } from "./Callout";
+import { Counter, CounterProps } from "./Counter";
+import { Emphasis, EmphasisProps } from "./Emphasis";
 
 // Every template's duration + frame size are dynamic (from props), so one template
 // serves any video length and aspect ratio. The pipeline passes durationInFrames,
@@ -82,6 +87,56 @@ export const RemotionRoot: React.FC = () => {
         width={1080}
         height={1920}
         defaultProps={{ leftLabel: "MYTH", leftText: "More content means more growth", rightLabel: "TRUTH", rightText: "One clear message beats ten noisy ones", durationInFrames: 150, width: 1080, height: 1920, accent: "#4ADE80" } as ComparisonProps}
+        calculateMetadata={calcMeta}
+      />
+      <Composition
+        id="Lottie"
+        component={Lottie}
+        durationInFrames={90}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{ file: "sample.json", accent: "#FFD24A", key_color: "#ff00ff", loop: true, speed: 1, durationInFrames: 90, width: 1080, height: 1920 } as LottieProps}
+        calculateMetadata={calcMeta}
+      />
+      <Composition
+        id="SubscribePrompt"
+        component={SubscribePrompt}
+        durationInFrames={90}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{ text: "SUBSCRIBE", handle: "@yourhandle", accent: "#FFD24A", durationInFrames: 90, width: 1080, height: 1920 } as SubscribePromptProps}
+        calculateMetadata={calcMeta}
+      />
+      <Composition
+        id="Callout"
+        component={Callout}
+        durationInFrames={90}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{ text: "THIS CHANGES EVERYTHING", accent: "#FFD24A", durationInFrames: 90, width: 1080, height: 1920 } as CalloutProps}
+        calculateMetadata={calcMeta}
+      />
+      <Composition
+        id="Counter"
+        component={Counter}
+        durationInFrames={90}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{ value: "10,000", label: "downloads in week one", accent: "#FFD24A", durationInFrames: 90, width: 1080, height: 1920 } as CounterProps}
+        calculateMetadata={calcMeta}
+      />
+      <Composition
+        id="Emphasis"
+        component={Emphasis}
+        durationInFrames={90}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{ mode: "circle", cx: 0.5, cy: 0.5, accent: "#FFD24A", durationInFrames: 90, width: 1080, height: 1920 } as EmphasisProps}
         calculateMetadata={calcMeta}
       />
     </>
