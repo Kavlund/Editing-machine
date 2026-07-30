@@ -256,7 +256,19 @@
             <div class="triml"><span class="lab" style="margin:0">Trim</span><input type="number" class="numin" id="trimN" value="0.5" min="0.1" step="0.1"><span class="lab" style="margin:0">s off</span><button class="btn" id="trimFirst">Start</button><button class="btn" id="trimLast">End</button></div>
           </div>
 
-          <p class="muted-note" id="hint" style="margin-top:4px">Drag the caption in the preview to move it. Click a Video clip to trim, a caption to edit its text, a zoom to remove. Drag b-roll or graphics blocks to reposition.</p>
+          <div class="grp" id="gfxEditPanel" style="display:none">
+            <div class="divide"></div>
+            <span class="lab">Graphic: <span id="gfxSelName"></span></span>
+            <p class="muted-note" style="margin:2px 0 6px">Edit the text, colour and length, or remove it. It updates in the preview.</p>
+            <div id="gfxFields"></div>
+            <div class="triml" style="margin-top:6px"><span class="lab" style="margin:0">Length</span><input type="number" class="numin" id="gfxDur" value="3" min="1" max="8" step="0.5"><span class="lab" style="margin:0">s</span></div>
+            <span class="lab" style="margin-top:8px">This graphic's colour</span>
+            <div class="swatches brand" data-target="gfxone"></div>
+            <div class="colorctl"><input type="color" class="pick" id="gfxOnePick" value="#fbbf24"><input type="text" class="hexin" id="gfxOneHex" maxlength="7" placeholder="video colour" spellcheck="false"><button class="btn" id="gfxOneClear" title="Use the whole-video graphics colour">Reset</button></div>
+            <div class="clip-actions" style="grid-template-columns:1fr;margin-top:8px"><button class="btn danger" id="gfxDelete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Remove graphic</button></div>
+          </div>
+
+          <p class="muted-note" id="hint" style="margin-top:4px">Drag the caption in the preview to move it. Click a Video clip to trim, a caption to edit its text, a graphic to edit it, a zoom to remove. Drag b-roll or graphics blocks to reposition.</p>
         </div>
       </section>
     </div>
@@ -268,7 +280,7 @@
         <div class="lane"><div class="name"><span class="k" style="background:#5a6188"></span>Video</div><div class="track" id="tVideo"></div></div>
         <div class="lane"><div class="name"><span class="k" style="background:var(--cap)"></span>Captions</div><div class="track" id="tCap"></div></div>
         <div class="lane"><div class="name"><span class="k" style="background:var(--broll)"></span>B-roll<button class="addbtn" id="addBroll" title="Add b-roll from the client's library / Drive">+</button></div><div class="track" id="tBroll"></div></div>
-        <div class="lane"><div class="name"><span class="k" style="background:var(--gfx)"></span>Graphics</div><div class="track" id="tGfx"></div></div>
+        <div class="lane"><div class="name"><span class="k" style="background:var(--gfx)"></span>Graphics<button class="addbtn" id="addGfx" title="Add a motion graphic at the playhead">+</button></div><div class="track" id="tGfx"></div></div>
         <div class="lane"><div class="name"><span class="k" style="background:var(--zoom)"></span>Zooms</div><div class="track" id="tZoom"></div></div>
         <div class="playhead" id="playhead" style="left:88px"><span class="ph-grab" id="phgrab" title="Drag to scrub"></span></div>
       </div></div>
@@ -277,6 +289,7 @@
 </div>
 <div class="toast" id="toast"><span class="dot"></span><span id="toastMsg"></span></div>
 <div class="modal" id="brollPicker" style="display:none"><div class="modal-card"><div class="modal-h"><b>Add b-roll at the playhead</b><button class="x" id="brollClose">✕</button></div><div class="modal-body" id="brollList"></div></div></div>
+<div class="modal" id="gfxPicker" style="display:none"><div class="modal-card"><div class="modal-h"><b>Add a motion graphic at the playhead</b><button class="x" id="gfxPickerClose">✕</button></div><div class="modal-body" id="gfxList"></div></div></div>
 
 <script>
 (function(){
@@ -300,9 +313,9 @@
   function undo(){
     if(!HIST.length){toast('Nothing to undo');return;}
     _pending=null;Object.assign(S,HIST.pop());
-    selClip=-1;editIdx=-1;band.a=0;band.b=0;
-    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';
-    reflectCaption();renderTimeline();updateLiveCaption($('video').currentTime||0);
+    selClip=-1;editIdx=-1;selGfx=-1;band.a=0;band.b=0;
+    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='none';
+    reflectCaption();reflectGfx();renderTimeline();updateLiveCaption($('video').currentTime||0);
     $('save').disabled=(JSON.stringify(cloneEdit(S))===PRISTINE);refreshUndo();toast('Undid last change');
   }
 
@@ -475,7 +488,7 @@
     var g=null;
     for(var i=0;i<S.graphics.length;i++){var s=S.graphics[i].start_sec||0,e=s+(S.graphics[i].duration_sec||3);if(t>=s&&t<e){g=S.graphics[i];break;}}
     if(!g){wrap.style.display='none';wrap.innerHTML='';return;}
-    var ac=S.gfxColor||S.brandColors[0]||'#fbbf24',ink='#0a0b10',stageH=$('stage').clientHeight||533;
+    var ac=(g.props&&g.props.accent)||S.gfxColor||S.brandColors[0]||'#fbbf24',ink='#0a0b10',stageH=$('stage').clientHeight||533;
     var info=gfxInfo(g),html='';
     if(info.emphasis){
       var d=Math.max(46,stageH*0.2);
@@ -512,7 +525,7 @@
     v=String(v||'').toLowerCase();var matched=false;
     document.querySelectorAll('.swatches[data-target="'+t+'"] .sw').forEach(function(s){
       var on=(s.getAttribute('data-c')||'').toLowerCase()===v;s.classList.toggle('on',on);if(on&&v)matched=true;});
-    var ids={text:['txtPick','txtHex'],hl:['hlPick','hlHex'],capcolor:['capPick','capHex'],gfxcolor:['gfxPick','gfxHex']}[t]||[];
+    var ids={text:['txtPick','txtHex'],hl:['hlPick','hlHex'],capcolor:['capPick','capHex'],gfxcolor:['gfxPick','gfxHex'],gfxone:['gfxOnePick','gfxOneHex']}[t]||[];
     var pick=$(ids[0]),hex=$(ids[1]);
     if(pick&&/^#[0-9a-f]{6}$/.test(v))pick.value=v;
     if(hex&&document.activeElement!==hex)hex.value=(v&&v.charAt(0)==='#')?v:'';
@@ -536,8 +549,105 @@
     dirty();
   }
   function reflectGfx(){swatch('gfxcolor',S.gfxColor||'');}
+  // ---- Motion-graphic content editing (select a graphic -> edit its text/colour/length) ----
+  var selGfx=-1;
+  var GFX_FIELDS={
+    ListCard:[['title','Title (optional)','t'],['items','Items (one per line)','L']],
+    Steps:[['title','Title (optional)','t'],['steps','Steps (one per line)','L']],
+    Checklist:[['title','Title (optional)','t'],['items','Items (one per line)','L']],
+    Stat:[['value','Value','t'],['label','Label','t']],
+    Counter:[['value','Value','t'],['label','Label','t']],
+    ProgressBar:[['label','Label','t'],['value','Value (e.g. 72%)','t'],['caption','Caption (optional)','t']],
+    Countdown:[['label','Label','t'],['value','Value (e.g. 24:00:00)','t']],
+    PriceCard:[['price','Price','t'],['was','Was price (optional)','t'],['label','Label (optional)','t'],['cta','Call to action (optional)','t']],
+    QuoteCard:[['quote','Quote','a'],['attribution','Attribution (optional)','t']],
+    Testimonial:[['quote','Quote','a'],['name','Name (optional)','t'],['role','Role (optional)','t'],['stars','Stars 0-5','n']],
+    LowerThird:[['name','Name','t'],['subtitle','Subtitle','t']],
+    Comparison:[['leftLabel','Left label','t'],['leftText','Left text','t'],['rightLabel','Right label','t'],['rightText','Right text','t']],
+    KeyTakeaway:[['label','Label','t'],['text','Text','a']],
+    Definition:[['term','Term','t'],['definition','Definition','a']],
+    Warning:[['label','Label','t'],['text','Text','a']],
+    QuestionCard:[['question','Question','a']],
+    Callout:[['text','Text','a']],
+    Divider:[['kicker','Kicker (optional)','t'],['text','Title','t']],
+    SubscribePrompt:[['text','Button text','t'],['handle','Handle (optional)','t']],
+    SharePrompt:[['text','Text','t'],['handle','Handle (optional)','t']],
+    SwipeUp:[['text','Text','t']],
+    SaveThis:[['text','Text','t']],
+    CommentPrompt:[['word','Word to comment','t']],
+    Emphasis:[['mode','Mode: circle, underline or arrow','t'],['cx','Across 0-1','n'],['cy','Down 0-1','n']],
+    Lottie:[['file','Lottie file','t']]
+  };
+  var GFX_LIST=[
+    {id:'Callout',label:'Callout text',def:{text:'This changes everything'}},
+    {id:'Stat',label:'Stat / number',def:{value:'90%',label:'of viewers drop off'}},
+    {id:'Counter',label:'Counting number',def:{value:'10,000',label:'downloads'}},
+    {id:'KeyTakeaway',label:'Key takeaway',def:{label:'KEY TAKEAWAY',text:'The one thing to remember'}},
+    {id:'Steps',label:'Steps',def:{title:'How it works',steps:['First step','Second step','Third step']}},
+    {id:'Checklist',label:'Checklist',def:{title:'Checklist',items:['Item one','Item two','Item three']}},
+    {id:'ListCard',label:'List',def:{title:'3 ways to win',items:['One','Two','Three']}},
+    {id:'ProgressBar',label:'Progress bar',def:{label:'Progress',value:'72%'}},
+    {id:'QuoteCard',label:'Quote',def:{quote:'A memorable line worth pulling out.'}},
+    {id:'Testimonial',label:'Testimonial',def:{quote:'This helped me a lot.',stars:5}},
+    {id:'LowerThird',label:'Name tag',def:{name:'Name',subtitle:'Role'}},
+    {id:'Definition',label:'Definition',def:{term:'Term',definition:'What it means'}},
+    {id:'Comparison',label:'This vs that',def:{leftLabel:'MYTH',leftText:'...',rightLabel:'TRUTH',rightText:'...'}},
+    {id:'Warning',label:'Warning',def:{label:'WATCH OUT',text:'The mistake to avoid'}},
+    {id:'PriceCard',label:'Price / offer',def:{price:'$49',was:'$99',label:'TODAY ONLY',cta:'Link in bio'}},
+    {id:'Countdown',label:'Countdown',def:{label:'ENDS IN',value:'24:00:00'}},
+    {id:'Divider',label:'Section divider',def:{kicker:'PART 2',text:'The System'}},
+    {id:'QuestionCard',label:'Question',def:{question:'What is stopping you?'}},
+    {id:'Emphasis',label:'Circle / arrow',def:{mode:'circle',cx:0.5,cy:0.45}},
+    {id:'SubscribePrompt',label:'Subscribe button',def:{text:'SUBSCRIBE'}},
+    {id:'SharePrompt',label:'Like / share',def:{text:'Like · Comment · Share'}},
+    {id:'SwipeUp',label:'Link in bio',def:{text:'Link in bio'}},
+    {id:'SaveThis',label:'Save this',def:{text:'Save this'}},
+    {id:'CommentPrompt',label:'Comment prompt',def:{word:'YES'}}
+  ];
+  function selectGfx(i){
+    if(i<0||i>=S.graphics.length)return;
+    selGfx=i;selClip=-1;editIdx=-1;
+    $('clipPanel').style.display='none';$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='block';
+    var g=S.graphics[i];
+    $('gfxSelName').textContent=g.template;
+    $('gfxDur').value=g.duration_sec||3;
+    var ac=(g.props&&g.props.accent)||'';
+    $('gfxOnePick').value=/^#[0-9a-f]{6}$/i.test(ac)?ac:(S.gfxColor||S.brandColors[0]||'#fbbf24');
+    if(document.activeElement!==$('gfxOneHex'))$('gfxOneHex').value=ac||'';
+    swatch('gfxone',ac||'');
+    renderGfxForm();gotoGfx(i);renderTimeline();
+  }
+  function renderGfxForm(){
+    var wrap=$('gfxFields');wrap.innerHTML='';
+    if(selGfx<0)return;
+    var g=S.graphics[selGfx],fields=GFX_FIELDS[g.template]||[];g.props=g.props||{};
+    fields.forEach(function(f){
+      var key=f[0],label=f[1],type=f[2],val=g.props[key];
+      if(type==='L')val=(Array.isArray(val)?val.join('\n'):(val||''));else if(val==null)val='';
+      var row=document.createElement('div');row.style.margin='7px 0';
+      var lab=document.createElement('div');lab.className='k';lab.style.marginBottom='3px';lab.textContent=label;
+      var inp;
+      if(type==='a'||type==='L'){inp=document.createElement('textarea');inp.className='capedit';inp.style.minHeight=(type==='L'?'60px':'42px');}
+      else if(type==='n'){inp=document.createElement('input');inp.type='number';inp.className='numin';inp.step='any';}
+      else{inp=document.createElement('input');inp.type='text';inp.className='hexin';inp.style.width='100%';inp.style.height='30px';inp.style.fontFamily='inherit';inp.style.fontSize='13px';}
+      inp.value=val;inp.setAttribute('data-k',key);inp.setAttribute('data-t',type);
+      inp.addEventListener('input',function(){
+        var gg=S.graphics[selGfx];if(!gg)return;gg.props=gg.props||{};
+        var k=this.getAttribute('data-k'),ty=this.getAttribute('data-t'),vv=this.value;
+        if(ty==='L')gg.props[k]=vv.split(/\n/).map(function(s){return s.trim();}).filter(Boolean);
+        else if(ty==='n')gg.props[k]=(vv===''?undefined:parseFloat(vv));
+        else gg.props[k]=vv;
+        renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);
+      });
+      row.appendChild(lab);row.appendChild(inp);wrap.appendChild(row);
+    });
+  }
+  function setGfxOne(c){if(selGfx<0)return;var v=c?normHex(c):'';var g=S.graphics[selGfx];g.props=g.props||{};if(v)g.props.accent=v;else delete g.props.accent;swatch('gfxone',v||'');if(v)$('gfxOnePick').value=v;dirty();updateLiveCaption($('video').currentTime||0);}
+  function deleteGfx(){if(selGfx<0)return;armSnapshot();S.graphics.splice(selGfx,1);selGfx=-1;$('gfxEditPanel').style.display='none';renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);toast('Graphic removed');}
+  function openGfxPicker(){var m=$('gfxPicker'),list=$('gfxList');m.style.display='flex';list.innerHTML='';GFX_LIST.forEach(function(it){var el=document.createElement('div');el.className='bclip';el.innerHTML='<div class="bn">'+esc(it.label)+'</div><div class="bs">'+esc(it.id)+'</div>';el.addEventListener('click',function(){addGfxAt(it);});list.appendChild(el);});}
+  function addGfxAt(it){armSnapshot();var t=Math.max(0,Math.min((S.dur||1)-1,(_seekTarget!=null?_seekTarget:($('video').currentTime||0))));var g={template:it.id,props:JSON.parse(JSON.stringify(it.def||{})),start_sec:Math.round(t*10)/10,duration_sec:3};S.graphics.push(g);$('gfxPicker').style.display='none';renderTimeline();dirty();selectGfx(S.graphics.length-1);toast('Added '+it.label+' — edit it on the right');}
   function buildBrandSwatches(){
-    ['text','hl','gfxcolor'].forEach(function(t){
+    ['text','hl','gfxcolor','gfxone'].forEach(function(t){
       var row=document.querySelector('.swatches.brand[data-target="'+t+'"]');if(!row)return;row.innerHTML='';
       (S.brandColors||[]).forEach(function(hex){var s=document.createElement('span');s.className='sw';s.setAttribute('data-c',hex);s.style.background=hex;s.title='Brand '+hex;row.appendChild(s);});
     });
@@ -567,7 +677,7 @@
     // GRAPHICS — draggable
     var tg=$('tGfx');tg.innerHTML='';
     if(!S.graphics.length)tg.innerHTML='<span class="empty">none</span>';
-    S.graphics.forEach(function(g,i){var b=document.createElement('div');b.className='blk gfx';b.style.left=pct(g.start_sec||0)+'%';b.style.width=Math.max(4,pct(g.duration_sec||3))+'%';b.textContent=g.template;b.title=g.template+' — click to preview, drag to move';b.dataset.i=i;dragBlock(b,'gfx',i);b.addEventListener('click',function(){gotoGfx(i);});tg.appendChild(b);});
+    S.graphics.forEach(function(g,i){var b=document.createElement('div');b.className='blk gfx'+(i===selGfx?' sel':'');b.style.left=pct(g.start_sec||0)+'%';b.style.width=Math.max(4,pct(g.duration_sec||3))+'%';b.textContent=g.template;b.title=g.template+' — click to edit, drag to move';b.dataset.i=i;dragBlock(b,'gfx',i);b.addEventListener('click',function(){selectGfx(i);});tg.appendChild(b);});
     renderZooms();
   }
   var _zoomDragged=false;
@@ -608,14 +718,14 @@
 
   // ---- caption text edit ----
   var editIdx=-1;
-  function editCaption(i){editIdx=i;var c=S.captions[i];$('capTextPanel').style.display='block';$('clipPanel').style.display='none';
+  function editCaption(i){editIdx=i;selGfx=-1;var c=S.captions[i];$('capTextPanel').style.display='block';$('clipPanel').style.display='none';$('gfxEditPanel').style.display='none';
     $('capTextInfo').innerHTML='Caption at <b>'+fmt(c.start)+'</b> — edit the words shown on screen';$('capText').value=c.text;$('capText').focus();
     // jump the preview to this caption on the clean proxy so you see your edit live
     swatch('capcolor', S.capColors[norm(c.orig)]||'');
     ensureCleanPreview();var mid=Math.min((S.dur||1e9),c.start+0.05);try{$('video').currentTime=mid;}catch(e){}moveHead(mid);$('cur').textContent=fmt(mid);updateLiveCaption(mid);}
   // ---- video clip trim (cut band) ----
   var selClip=-1, band={a:0,b:0}; // band in output-seconds within the whole timeline
-  function selectClip(i){selClip=i;editIdx=-1;$('capTextPanel').style.display='none';$('clipPanel').style.display='block';
+  function selectClip(i){selClip=i;editIdx=-1;selGfx=-1;$('capTextPanel').style.display='none';$('gfxEditPanel').style.display='none';$('clipPanel').style.display='block';
     var off=clipOff(i),w=S.ranges[i].end-S.ranges[i].start;band.a=off;band.b=off+w;
     var r=S.ranges[i];$('selinfo').innerHTML='Clip '+(i+1)+' · <b>'+w.toFixed(1)+'s</b> · source '+(r.source||'');renderTimeline();}
   function clipOff(i){var off=0;for(var k=0;k<i;k++)off+=S.ranges[k].end-S.ranges[k].start;return off;}
@@ -636,6 +746,14 @@
     $('addBroll').addEventListener('click',openBrollPicker);
     $('brollClose').addEventListener('click',function(){$('brollPicker').style.display='none';});
     $('brollPicker').addEventListener('click',function(e){if(e.target.id==='brollPicker')$('brollPicker').style.display='none';});
+    $('addGfx').addEventListener('click',openGfxPicker);
+    $('gfxPickerClose').addEventListener('click',function(){$('gfxPicker').style.display='none';});
+    $('gfxPicker').addEventListener('click',function(e){if(e.target.id==='gfxPicker')$('gfxPicker').style.display='none';});
+    $('gfxDelete').addEventListener('click',deleteGfx);
+    $('gfxDur').addEventListener('input',function(){if(selGfx<0)return;S.graphics[selGfx].duration_sec=Math.max(1,Math.min(8,+this.value||3));renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);});
+    $('gfxOnePick').addEventListener('input',function(){setGfxOne(this.value.toLowerCase());});
+    $('gfxOneHex').addEventListener('input',function(){var v=normHex(this.value);if(v)setGfxOne(v);});
+    $('gfxOneClear').addEventListener('click',function(){setGfxOne('');$('gfxOneHex').value='';});
     window.addEventListener('keydown',function(e){if((e.metaKey||e.ctrlKey)&&(e.key==='z'||e.key==='Z')&&!e.shiftKey){var a=document.activeElement;if(a&&(a.id==='capText'||a.tagName==='TEXTAREA'||a.tagName==='INPUT'))return;e.preventDefault();undo();}});
     $('play').addEventListener('click',function(){var v=$('video');if(v.paused){v.play();$('pico').innerHTML='<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';}else{v.pause();$('pico').innerHTML='<path d="M8 5v14l11-7z"/>';}});
     $('safeToggle').addEventListener('click',function(){this.classList.toggle('on');$('stage').classList.toggle('show-safe');});
@@ -662,7 +780,7 @@
     $('titleBgHex').addEventListener('input',function(){var v=normHex(this.value);if(v){S.title.bg_color=v;$('titleBgPick').value=v;titleTouched();}});
     function flip(){ensureCleanPreview();var on=$('caps').classList.toggle('on');$('caps').setAttribute('aria-checked',on);S.caption.uppercase=on;dirty();}
     $('caps').addEventListener('click',flip);$('caps').addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();flip();}});
-    document.querySelectorAll('.swatches').forEach(function(w){w.addEventListener('click',function(e){var s=e.target.closest('.sw');if(!s)return;var t=w.getAttribute('data-target');var c=s.getAttribute('data-c');if(t==='capcolor'){setCapColor(c);}else if(t==='gfxcolor'){setGfxColor(c);}else{setColor(t,c);}});});
+    document.querySelectorAll('.swatches').forEach(function(w){w.addEventListener('click',function(e){var s=e.target.closest('.sw');if(!s)return;var t=w.getAttribute('data-target');var c=s.getAttribute('data-c');if(t==='capcolor'){setCapColor(c);}else if(t==='gfxcolor'){setGfxColor(c);}else if(t==='gfxone'){setGfxOne(c);}else{setColor(t,c);}});});
     // native colour pickers + hex inputs (converge on the same setters)
     if($('txtPick'))$('txtPick').addEventListener('input',function(){setColor('text',this.value.toLowerCase());});
     if($('hlPick'))$('hlPick').addEventListener('input',function(){setColor('hl',this.value.toLowerCase());});
