@@ -48,6 +48,51 @@ DEFAULT_STOP = {
 }
 PHRASE_END = set(".,!?;:")
 
+# Readability sets for line breaking inside a caption. EN + DA union, so both English
+# (Rooney / Claire / Max) and Danish (Kavlund) benefit with NO language detection — a
+# word only ever matters when it actually appears in that language's caption.
+# _LINE_TAIL_AVOID: forward-binding function words a line should never END on.
+_LINE_TAIL_AVOID = {
+    # English: prepositions / articles / conjunctions / determiners
+    "the", "a", "an", "to", "of", "in", "on", "at", "by", "for", "with", "from", "as",
+    "into", "onto", "about", "and", "but", "or", "nor", "so", "yet", "that", "this",
+    "these", "those", "your", "my", "our", "their", "his", "her", "its", "no", "every", "each",
+    # Danish
+    "og", "men", "eller", "at", "som", "i", "på", "med", "til", "af", "om", "fra", "over",
+    "under", "mod", "ved", "efter", "før", "uden", "gennem", "igennem", "hos", "mellem",
+    "hvor", "når", "fordi", "en", "et", "den", "det", "de", "din", "dit", "dine", "min",
+    "mit", "mine", "sin", "sit", "vores", "deres", "hans", "hendes",
+}
+
+
+def _wrap_words(words_list, fnt, max_w):
+    """Greedy width wrap, improved for readability: never END a line on a forward-binding
+    function word (which also makes any connective start the next line), and never leave a
+    lone word on a two-line caption's second line."""
+    def wide(ws):
+        return text_size(fnt, " ".join(ws))[0]
+    lines, i, n = [], 0, len(words_list)
+    while i < n:
+        j = i + 1
+        while j < n and wide(words_list[i:j + 1]) <= max_w:
+            j += 1
+        # For a non-final line, never end on a forward-binding function word: push it to
+        # the next line (which also makes any connective START the next line). Keep at
+        # least two words on the line so we don't create needless orphans.
+        if j < n:
+            while j - i >= 3:
+                lw = words_list[j - 1]
+                if lw and lw[-1] not in ".!?" and _norm_word(lw) in _LINE_TAIL_AVOID:
+                    j -= 1
+                else:
+                    break
+        lines.append(words_list[i:j]); i = j
+    # top-heavy: no single orphaned word on the second line of a two-line caption
+    if (len(lines) == 2 and len(lines[1]) == 1 and len(lines[0]) >= 3
+            and wide(lines[0][-1:] + lines[1]) <= max_w):
+        lines = [lines[0][:-1], lines[0][-1:] + lines[1]]
+    return lines
+
 
 def font(spec, size, weight=None):
     """Load a font for drawing.
@@ -305,15 +350,9 @@ def render_caption_image(text, fnt, cy, max_w, color=(255,255,255,255),
     words_list = text.split()
     if not words_list:
         return Image.new("RGBA", (W, H), (0,0,0,0))
-    # Word-wrap into lines (each a list of words)
-    lines, line = [], []
-    for w in words_list:
-        trial = " ".join(line + [w])
-        if text_size(fnt, trial)[0] > max_w and line:
-            lines.append(line); line = [w]
-        else:
-            line.append(w)
-    if line: lines.append(line)
+    # Word-wrap into lines (each a list of words), readability-aware: never end a line
+    # on a function word, prefer to break before a connective, no orphaned last-line word.
+    lines = _wrap_words(words_list, fnt, max_w)
 
     lh = int(text_size(fnt, "Ag")[1] * 1.15)
     total_h = lh * len(lines)
