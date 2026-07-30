@@ -213,8 +213,13 @@ def overlay(edit, edl, base, out, starts, durs):
         if gd <= 0:
             continue
         gs  = max(0.0, float(g.get("start_sec", 0.0)))
+        # Optional Studio position: an offset (fraction of the frame) the editor set by
+        # dragging the graphic in the preview. Shifts the whole transparent layer, so the
+        # centered content moves by that much. Clamped so it can't be dragged fully away.
+        gx  = int(round(max(-0.45, min(0.45, float(g.get("x", 0.0) or 0.0))) * OW))
+        gy  = int(round(max(-0.45, min(0.45, float(g.get("y", 0.0) or 0.0))) * OH))
         idx = gidx0 + len(gwin)
-        gwin.append((idx, gs, gs + gd))
+        gwin.append((idx, gs, gs + gd, gx, gy))
         inputs += ["-i", str(gp)]
 
     parts = ["[0:v]format=yuv420p[v0]"]
@@ -222,7 +227,7 @@ def overlay(edit, edl, base, out, starts, durs):
     if has_hook:  parts.append(f"[{hi}:v]setpts=PTS-STARTPTS+{hook_start}/TB[h1]")
     if has_title: parts.append(f"[{ti}:v]setpts=PTS-STARTPTS[t1]")
     if has_caps:  parts.append(f"[{ci}:v]setpts=PTS-STARTPTS[c1]")
-    for j, (idx, gs, ge) in enumerate(gwin):
+    for j, (idx, gs, ge, gx, gy) in enumerate(gwin):
         parts.append(f"[{idx}:v]setpts=PTS-STARTPTS+{gs:.3f}/TB[g{j}]")
 
     cur = "[v0]"
@@ -252,16 +257,19 @@ def overlay(edit, edl, base, out, starts, durs):
         nl = f"[bo{i}]"
         parts.append(f"{cur}[b{i}]{ov}{nl}")
         cur = nl
-    for j, (idx, gs, ge) in enumerate(gwin):
+    for j, (idx, gs, ge, gx, gy) in enumerate(gwin):
         nl = f"[go{j}]"
-        parts.append(f"{cur}[g{j}]overlay=enable='between(t,{gs:.3f},{ge:.3f})'{nl}")
+        parts.append(f"{cur}[g{j}]overlay=x={gx}:y={gy}:enable='between(t,{gs:.3f},{ge:.3f})'{nl}")
         cur = nl
     if has_hook:
         he = hook_start + hook_dur
         nl = "[oh]"
         parts.append(f"{cur}[h1]overlay=enable='between(t,{hook_start:.2f},{he:.2f})'{nl}"); cur = nl
     if has_title:
-        nl = "[ot]"; parts.append(f"{cur}[t1]overlay=enable='between(t,0,{title_dur})'{nl}"); cur = nl
+        _tt = (edl.get("style") or {}).get("title") or {}
+        _tx = int(round(max(-0.45, min(0.45, float(_tt.get("x", 0.0) or 0.0))) * OW))
+        _ty = int(round(max(-0.45, min(0.45, float(_tt.get("y", 0.0) or 0.0))) * OH))
+        nl = "[ot]"; parts.append(f"{cur}[t1]overlay=x={_tx}:y={_ty}:enable='between(t,0,{title_dur})'{nl}"); cur = nl
     if has_caps:
         nl = "[vpre]"; parts.append(f"{cur}[c1]overlay=enable='between(t,0,{caps_dur:.2f})'{nl}"); cur = nl
     else:

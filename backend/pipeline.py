@@ -1766,6 +1766,12 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                             _t["duration"] = float(overrides["title_duration"])
                         except (TypeError, ValueError):
                             pass
+                    for _ok, _ek in (("title_x", "x"), ("title_y", "y")):   # dragged position offset
+                        if _ok in overrides:
+                            try:
+                                _t[_ek] = max(-0.45, min(0.45, float(overrides[_ok])))
+                            except (TypeError, ValueError):
+                                pass
                     _t.setdefault("duration", 4.5)   # compose needs duration>0 to show the card
                     if not (_t.get("impact_lines") or _t.get("handwritten")):
                         edl.get("style", {}).pop("title", None)       # cleared text -> no card

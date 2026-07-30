@@ -1694,6 +1694,12 @@ async def save_studio(job_id: str, request: Request):
                 ov["title_duration"] = float(tt["duration"])
             except (TypeError, ValueError):
                 pass
+        for _k, _ok in (("x", "title_x"), ("y", "title_y")):   # dragged position offset
+            if tt.get(_k) is not None:
+                try:
+                    ov[_ok] = max(-0.45, min(0.45, float(tt[_k])))
+                except (TypeError, ValueError):
+                    pass
 
     # Caption TEXT edits -> [{from, to}] matched by original text at render
     if isinstance(body.get("caption_text_overrides"), list):
