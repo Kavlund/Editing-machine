@@ -149,8 +149,9 @@ def test(channel: str, override: dict | None = None) -> tuple[bool, str]:
     for k, v in (override or {}).items():
         if str(v or "").strip():
             c[k] = str(v).strip()
+    brand = os.environ.get("BRAND_NAME", "Editing Machine")   # this instance, so the test names itself
     try:
-        _SENDERS[channel](c, _fmt(channel, True, "Acquisition Empire", "a test notification", ""))
+        _SENDERS[channel](c, _fmt(channel, True, brand, "a test notification", ""))
         return True, ""
     except Exception as e:
         return False, str(e)
