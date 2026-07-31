@@ -356,60 +356,62 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
             "    LOTTIE LIBRARY (only these files exist):\n" + _lot_lines + "\n"
         )
     graphics_rules = (
-        "\n- graphics: OPTIONAL on-screen motion-graphic cards, each anchored to a spoken moment by an EXACT "
-        "short quote from the transcript. DEFAULT TO NONE. Most good videos have 0 to 1; a genuinely busy one "
-        "at most 2. Add a graphic ONLY when that exact moment is clearly stronger with it on screen — never add "
-        "one just because a template could fit, never put one on every line, and never stack two back to back. "
-        "When in doubt, leave it out. Use a template ONLY when its trigger below is clearly met:\n"
-        "  * ListCard — ONLY when the speaker explicitly enumerates a short list of points/steps/tips. "
+        "\n- graphics: on-screen motion-graphic cards, each anchored to a spoken moment by an EXACT short "
+        "quote from the transcript. Add 1 to 2 on a normal video (up to 3 on a rich one) wherever a moment "
+        "genuinely lands harder with a card — a list, a number, a key line, a name, a comparison, a "
+        "definition, or a call to action. Prefer a well-placed card over none; only return [] when the clip "
+        "is genuinely too short or too bare for any. Never put one on every line and never stack two back to "
+        "back. Pick the template that fits the moment:\n"
+        "  * ListCard — when the speaker enumerates a short list of points/steps/tips. "
         'props: {"title": "optional short header or omit", "items": ["2-5 SHORT lines, 2-5 words each"]}.\n'
-        "  * Stat — ONLY when the speaker states one striking number/metric worth spotlighting. "
+        "  * Stat — when the speaker states a striking number/metric worth spotlighting. "
         'props: {"value": "90%" or "10x" or "$1.4B", "label": "short caption of what it means"}.\n'
-        "  * LowerThird — ONLY to name a person or brand, the first time they are introduced. "
+        "  * LowerThird — to name a person or brand the first time they are introduced. "
         'props: {"name": "the name", "subtitle": "role or tagline"}.\n'
-        "  * QuoteCard — ONLY for ONE genuinely memorable line, at most once in the whole video. "
+        "  * QuoteCard — for a memorable line, as a pull-quote. "
         'props: {"quote": "the sentence in normal sentence case", "attribution": "who said it, or omit"}.\n'
-        "  * Comparison — ONLY when the speaker explicitly contrasts two sides (before vs after, myth vs truth). "
+        "  * Comparison — when the speaker contrasts two sides (before vs after, myth vs truth). "
         'props: {"leftLabel": "MYTH or BEFORE", "leftText": "short", "rightLabel": "TRUTH or AFTER", "rightText": "short"}.\n'
-        "  * SubscribePrompt — ONLY if the speaker actually asks viewers to follow/subscribe; at most ONCE, on that ask. "
+        "  * SubscribePrompt — if the speaker asks viewers to follow/subscribe; at most once, on that ask. "
         'props: {"text": "SUBSCRIBE" or "FOLLOW", "handle": "@handle or omit"}.\n'
-        "  * Callout — ONLY to punch ONE short, quotable spoken phrase (3-6 words) that truly deserves emphasis. Rare. "
+        "  * Callout — to punch one short, quotable spoken phrase (3-6 words) onto the screen. "
         'props: {"text": "the exact short phrase, in the transcript language"}.\n'
-        "  * Counter — ONLY when a specific number lands harder counting up (followers, revenue, %, days). "
+        "  * Counter — when a specific number lands harder counting up (followers, revenue, %, days). "
         'props: {"value": "10,000" or "87%" or "$1.4B", "label": "short caption of what it counts"}.\n'
-        "  * Emphasis — ONLY to circle / underline / point at ONE specific thing the speaker calls out on screen. "
+        "  * Emphasis — to circle / underline / point at one specific thing the speaker calls out on screen. "
         'props: {"mode": "circle" or "underline" or "arrow", "cx": 0.5, "cy": 0.5}  // cx,cy = 0..1 position on the frame.\n'
-        "  * Steps — ONLY when the speaker lays out an ordered process (first, then, finally). "
+        "  * Steps — when the speaker lays out an ordered process (first, then, finally). "
         'props: {"title": "optional", "steps": ["2-4 short ordered steps"]}.\n'
-        "  * Checklist — ONLY for a short set of must-do / must-have items to tick off. "
+        "  * Checklist — for a short set of must-do / must-have items to tick off. "
         'props: {"title": "optional", "items": ["2-5 short items"]}.\n'
-        "  * ProgressBar — ONLY when a single proportion or percentage is the point (a share, a completion rate). "
+        "  * ProgressBar — when a single proportion or percentage is the point (a share, a completion rate). "
         'props: {"label": "what it measures", "value": "72%" or "7/10", "caption": "optional note"}.\n'
-        "  * KeyTakeaway — ONLY to lock in the ONE thing to remember; at most once. "
+        "  * KeyTakeaway — to lock in the one thing to remember. "
         'props: {"label": "optional, defaults KEY TAKEAWAY", "text": "the one line"}.\n'
-        "  * Definition — ONLY when the speaker defines a term or piece of jargon. "
+        "  * Definition — when the speaker defines a term or piece of jargon. "
         'props: {"term": "the term", "definition": "a short plain explanation"}.\n'
-        "  * Warning — ONLY to flag a mistake or thing to avoid. "
+        "  * Warning — to flag a mistake or thing to avoid. "
         'props: {"label": "optional, defaults WATCH OUT", "text": "the pitfall, short"}.\n'
-        "  * PriceCard — ONLY when a price or offer is stated. "
+        "  * PriceCard — when a price or offer is stated. "
         'props: {"price": "$49", "was": "optional old price", "label": "optional e.g. TODAY ONLY", "cta": "optional"}.\n'
-        "  * Testimonial — ONLY for a customer or result quote used as social proof. "
+        "  * Testimonial — for a customer or result quote used as social proof. "
         'props: {"quote": "short quote", "name": "optional", "role": "optional", "stars": 5}.\n'
-        "  * Countdown — ONLY for genuine urgency or a deadline the speaker states. "
+        "  * Countdown — for genuine urgency or a deadline the speaker states. "
         'props: {"label": "optional e.g. ENDS IN", "value": "24:00:00" or "3 DAYS"}.\n'
-        "  * Divider — ONLY to mark a clear new section or chapter of the video. "
+        "  * Divider — to mark a clear new section or chapter of the video. "
         'props: {"text": "the section title", "kicker": "optional e.g. PART 2"}.\n'
-        "  * QuestionCard — ONLY to put a direct question to the viewer on screen. "
+        "  * QuestionCard — to put a direct question to the viewer on screen. "
         'props: {"question": "the question"}.\n'
-        "  * SharePrompt — ONLY for a generic like/comment/share nudge (a specific subscribe ask uses SubscribePrompt instead). At most once. "
+        "  * SharePrompt — for a like/comment/share nudge (a specific subscribe ask uses SubscribePrompt). At most once. "
         'props: {"text": "optional", "handle": "@handle or omit"}.\n'
-        "  * SwipeUp — ONLY when pointing to a link in bio or swipe up. At most once. "
+        "  * SwipeUp — when pointing to a link in bio or swipe up. At most once. "
         'props: {"text": "optional, defaults LINK IN BIO"}.\n'
-        "  * CommentPrompt — ONLY when the speaker asks viewers to comment a specific word. "
+        "  * CommentPrompt — when the speaker asks viewers to comment a specific word. "
         'props: {"word": "the word to comment, e.g. YES"}.\n'
-        "  * SaveThis — ONLY when the content is a reference worth saving. At most once. "
+        "  * SaveThis — when the content is a reference worth saving. At most once. "
         'props: {"text": "optional, defaults SAVE THIS"}.\n'
-        "  Write the props text in the SAME language as the transcript. duration_sec 2.5-4. If nothing clearly fits, [].\n"
+        "  Write the props text in the SAME language as the transcript. duration_sec 2.5-4. Aim for at least "
+        "one card on a normal video.\n"
         + _lot_rule
     ) if graphics_on else ""
 
@@ -527,7 +529,7 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                         dur, at = 3.0, 0.0
                     gs.append({"template": t, "quote": str(g.get("quote", "")).strip(),
                                "at_sec": at, "duration_sec": dur, "props": props})
-                plan["graphics"] = gs[:2]   # hard cap: never carpet the video with cards
+                plan["graphics"] = gs[:3]   # hard cap: never carpet the video with cards
         log_fn(f"AI plan: hook={'yes' if plan['hook'] else 'no'}, "
                f"{len(plan['keywords'])} keyword(s), zoom={plan['zoom']['enabled']}, "
                f"{len(plan['zoom_events'])} timed zoom(s), {len(plan['graphics'])} graphic(s)")
@@ -975,8 +977,9 @@ def _plan_broll(source_map: dict, broll_tags: dict, instructions: str,
         "HARD RULES:\n"
         "- NEVER use a clip that merely shows a person talking, a face, or a selfie. That is redundant over "
         "talking-head footage and is always wrong as B-roll.\n"
-        "- Returning an EMPTY list [] is a correct, GOOD answer when nothing strongly fits. It is far better "
-        "to place NOTHING than to place a clip that doesn't clearly match. Do NOT force placements.\n"
+        "- Place a clip wherever its visual content genuinely matches the moment being spoken — use the good "
+        "matches in the library, don't leave them on the table. Return [] only when nothing in the library "
+        "fits; never force a weak match.\n"
         "- The quote MUST be copied verbatim from the transcript (2-5 consecutive words) so it can be located.\n"
         + count_rule + photo_rule +
         "- duration_sec between 1.5 and 3.5.\n"
@@ -1366,16 +1369,18 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
     title_cfg = editing.get("title")
     if title_cfg and title_cfg.get("impact_lines"):
         title_cfg = dict(title_cfg)   # don't mutate the client profile
-        # Title text defaults to the client's BRAND colour (not whatever onboarding set),
-        # lifted toward white if the brand colour is too dark to read. Editor override wins.
-        _tc = (graphics_color or "#ffffff").lstrip("#")
-        try:
+        # RESPECT a title colour set in the profile. ONLY when none is set, default to the
+        # brand colour if it is bright enough to read, otherwise clean white — never a
+        # washed-out grey. A per-video editor override still wins downstream.
+        if not str(title_cfg.get("color") or "").strip():
+            _tc = str(graphics_color or "").strip().lstrip("#")
+            if len(_tc) == 3:
+                _tc = "".join(ch * 2 for ch in _tc)   # expand 3-digit hex
+            if len(_tc) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in _tc):
+                _tc = "ffffff"
             _n = int(_tc, 16); _r, _g, _b = (_n >> 16) & 255, (_n >> 8) & 255, _n & 255
-            if (0.2126 * _r + 0.7152 * _g + 0.0722 * _b) / 255 < 0.5:
-                _r = round(_r + (255 - _r) * 0.55); _g = round(_g + (255 - _g) * 0.55); _b = round(_b + (255 - _b) * 0.55)
-            title_cfg["color"] = "#%02x%02x%02x" % (_r, _g, _b)
-        except ValueError:
-            title_cfg["color"] = graphics_color
+            lum = (0.2126 * _r + 0.7152 * _g + 0.0722 * _b) / 255
+            title_cfg["color"] = ("#" + _tc.lower()) if lum >= 0.5 else "#ffffff"
         edl["style"]["title"] = title_cfg
 
     return edl
