@@ -75,6 +75,20 @@
   .secnav a:hover{color:#fff;border-color:var(--muted);}
   .section-hdr{font-size:19px;color:#fff;font-weight:700;letter-spacing:-.01em;margin:36px 0 4px;}
   .section-sub{color:var(--muted);font-size:14px;margin:0 0 16px;line-height:1.5;}
+  .ntf-ch{border:1px solid #26304a;border-radius:12px;padding:14px 16px;margin:12px 0;background:rgba(255,255,255,.02);}
+  .ntf-en{display:flex;align-items:center;gap:9px;font-size:15px;font-weight:650;color:#fff;cursor:pointer;}
+  .ntf-en input{width:16px;height:16px;accent-color:#57d38c;}
+  .ntf-fields{margin-top:11px;}
+  .ntf-in{width:100%;box-sizing:border-box;background:#0e1420;border:1px solid #26304a;border-radius:9px;color:#e8eaf0;font-size:13px;padding:9px 11px;margin-bottom:8px;font-family:inherit;}
+  .ntf-in::placeholder{color:#5a6480;}
+  .ntf-row{display:flex;align-items:center;gap:10px;}
+  .ntf-btn{background:#2a3550;border:none;color:#cdd6ea;font-size:13px;font-weight:600;padding:8px 15px;border-radius:9px;cursor:pointer;}
+  .ntf-btn:hover{background:#33405f;}
+  .ntf-res{font-size:12.5px;}
+  .ntf-help{margin-top:9px;}
+  .ntf-help summary{color:var(--muted);font-size:12.5px;cursor:pointer;}
+  .ntf-help ol{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:12.5px;line-height:1.55;}
+  .save-notify{background:var(--green,#57d38c);color:#04140b;font-weight:700;font-size:14px;border:none;cursor:pointer;padding:11px 20px;border-radius:11px;}
   /* Our own confirm — the browser's can be permanently suppressed by the user
      ticking "prevent this page from creating additional dialogs". */
   .cfm-overlay{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.62);backdrop-filter:blur(4px);
@@ -124,7 +138,7 @@
     <div class="prog">
       <span class="pill" id="p-drive"><span class="dot"></span> Google Drive</span>
       <span class="pill" id="p-notion"><span class="dot"></span> Notion</span>
-      <span class="pill" id="p-slack"><span class="dot"></span> Slack</span>
+      <span class="pill" id="p-notify"><span class="dot"></span> Notifications</span>
     </div>
 
     <!-- 1 Google Drive -->
@@ -173,22 +187,68 @@
       </div>
     </div>
 
-    <!-- 3 Slack -->
+    <!-- 3 Notifications -->
     <div class="step">
       <div class="step-head">
         <div class="num">3</div>
-        <h2>Slack: get pinged when a cut is ready <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
+        <h2>Get pinged when a video is done <span style="color:var(--muted);font-weight:400;font-size:13px;">(optional)</span></h2>
         <span class="owner you">You do this</span>
-        <span class="badge" id="b-slack"><span class="d"></span><span class="t">Not connected</span></span>
+        <span class="badge" id="b-notify"><span class="d"></span><span class="t">Not connected</span></span>
       </div>
       <div class="body">
-        <ol class="do">
-          <li>At <b>api.slack.com/apps</b>: <b>Create New App → From scratch</b>, pick your workspace.</li>
-          <li>Open <b>Incoming Webhooks → On → Add New Webhook to Workspace</b>, choose a channel, <b>Allow</b>.</li>
-          <li>Copy the <b>webhook URL</b>. In your <b>Railway → Variables</b>, add <code>SLACK_WEBHOOK_URL</code>.</li>
-        </ol>
+        <p class="section-sub" style="margin:0 0 8px;">Pick one or more channels. You get a message the moment a cut is ready, with the Drive link. Leave a secret field blank to keep what's already saved.</p>
+
+        <div class="ntf-ch">
+          <label class="ntf-en"><input type="checkbox" id="en-telegram"> Telegram</label>
+          <div class="ntf-fields">
+            <input class="ntf-in" id="in-telegram-bot_token" type="password" autocomplete="off" placeholder="Bot token from @BotFather">
+            <input class="ntf-in" id="in-telegram-chat_id" type="text" autocomplete="off" placeholder="Your chat ID (a number)">
+            <div class="ntf-row"><button class="ntf-btn" data-test="telegram">Send test</button><span class="ntf-res" id="res-telegram"></span></div>
+            <details class="ntf-help"><summary>How to get these</summary>
+              <ol>
+                <li>In Telegram, open <b>@BotFather</b> → <b>/newbot</b>, name it, and copy the <b>bot token</b> it gives you.</li>
+                <li>Message your new bot once (say "hi") so it is allowed to reach you.</li>
+                <li>Open <b>@userinfobot</b> — it replies with your numeric <b>chat ID</b>. Paste both above and hit Send test.</li>
+              </ol>
+            </details>
+          </div>
+        </div>
+
+        <div class="ntf-ch">
+          <label class="ntf-en"><input type="checkbox" id="en-slack"> Slack</label>
+          <div class="ntf-fields">
+            <input class="ntf-in" id="in-slack-webhook" type="password" autocomplete="off" placeholder="Incoming Webhook URL">
+            <div class="ntf-row"><button class="ntf-btn" data-test="slack">Send test</button><span class="ntf-res" id="res-slack"></span></div>
+            <details class="ntf-help"><summary>How to get this</summary>
+              <ol>
+                <li>At <b>api.slack.com/apps</b> → <b>Create New App → From scratch</b>, pick your workspace.</li>
+                <li><b>Incoming Webhooks → On → Add New Webhook to Workspace</b>, choose a channel, Allow.</li>
+                <li>Copy the <b>Webhook URL</b> and paste it above.</li>
+              </ol>
+            </details>
+          </div>
+        </div>
+
+        <div class="ntf-ch">
+          <label class="ntf-en"><input type="checkbox" id="en-discord"> Discord</label>
+          <div class="ntf-fields">
+            <input class="ntf-in" id="in-discord-webhook" type="password" autocomplete="off" placeholder="Channel Webhook URL">
+            <div class="ntf-row"><button class="ntf-btn" data-test="discord">Send test</button><span class="ntf-res" id="res-discord"></span></div>
+            <details class="ntf-help"><summary>How to get this</summary>
+              <ol>
+                <li>In Discord: <b>Server Settings → Integrations → Webhooks → New Webhook</b>, pick a channel.</li>
+                <li><b>Copy Webhook URL</b> and paste it above.</li>
+              </ol>
+            </details>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;display:flex;align-items:center;gap:14px;">
+          <button class="save-notify" id="save-notify">Save channels</button>
+          <span id="notify-saved" style="font-size:12.5px;color:var(--muted);"></span>
+        </div>
       </div>
-      <p class="hint">You'll get: <b>"✅ Jordan Blake — 'Morning Routine' is done. Go have a look."</b> with the link.</p>
+      <p class="hint">You'll get: <b>"✅ Acquisition Empire — Morning Routine is done."</b> with the Drive link. WhatsApp isn't listed because it needs a Meta Business number or Twilio; ask and I'll wire it up.</p>
     </div>
 
     <!-- ═══════════ FILE MANAGEMENT ═══════════ -->
@@ -275,10 +335,10 @@
   function paint(s){
     var drive = !!(s.google_drive && s.google_drive.configured);
     var notion= !!(s.notion && s.notion.configured);
-    var slack = !!(s.slack && s.slack.configured);
+    var notify = !!(s.notify && s.notify.any);
     setBadge("b-drive",drive);  setPill("p-drive",drive);
     setBadge("b-notion",notion);setPill("p-notion",notion);
-    setBadge("b-slack",slack);  setPill("p-slack",slack);
+    setBadge("b-notify",notify);setPill("p-notify",notify);
     document.getElementById("foot").innerHTML = drive
       ? "✅ Google Drive connected. Finished videos will be delivered automatically."
       : "Live status. Updates automatically as you connect each service.";
@@ -290,6 +350,49 @@
     }catch(e){ /* keep last state */ }
   }
   poll(); setInterval(poll, 3500);
+
+  // ── Notifications (Telegram / Slack / Discord) ────────────────────────
+  (function(){
+    var CH=["telegram","slack","discord"];
+    var FIELDS={telegram:["bot_token","chat_id"],slack:["webhook"],discord:["webhook"]};
+    var SECRET={telegram:"bot_token",slack:"webhook",discord:"webhook"};
+    function inp(ch,f){return document.getElementById("in-"+ch+"-"+f);}
+    function en(ch){return document.getElementById("en-"+ch);}
+    function collect(ch){var v={enabled:en(ch).checked};FIELDS[ch].forEach(function(f){var el=inp(ch,f);if(el&&el.value.trim())v[f]=el.value.trim();});return v;}
+    function loadNotify(){
+      fetch("/api/notify",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
+        var chs=(d&&d.channels)||{};
+        CH.forEach(function(ch){
+          var c=chs[ch]||{}; if(en(ch))en(ch).checked=!!c.enabled;
+          if(c.target_field){var t=inp(ch,c.target_field);if(t)t.value=c.target_value||"";}
+          var sf=inp(ch,SECRET[ch]); if(sf&&c.secret_set)sf.placeholder="•••••••• saved (leave blank to keep)";
+        });
+      }).catch(function(){});
+    }
+    document.querySelectorAll(".ntf-btn[data-test]").forEach(function(btn){
+      btn.addEventListener("click",function(){
+        var ch=btn.getAttribute("data-test"),res=document.getElementById("res-"+ch);
+        res.textContent="Sending…"; res.style.color="var(--muted)";
+        fetch("/api/notify/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({channel:ch,values:collect(ch)})})
+          .then(function(r){return r.json();}).then(function(d){
+            if(d.ok){res.textContent="✅ Sent — check "+ch; res.style.color="var(--green)";}
+            else{res.textContent="⚠️ "+(d.error||"failed"); res.style.color="var(--amber)";}
+          }).catch(function(){res.textContent="⚠️ request failed"; res.style.color="var(--amber)";});
+      });
+    });
+    var saveBtn=document.getElementById("save-notify");
+    if(saveBtn)saveBtn.addEventListener("click",function(){
+      var payload={channels:{}}; CH.forEach(function(ch){payload.channels[ch]=collect(ch);});
+      var note=document.getElementById("notify-saved"); note.textContent="Saving…"; note.style.color="var(--muted)";
+      fetch("/api/notify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)})
+        .then(function(r){return r.json();}).then(function(){
+          note.textContent="✅ Saved"; note.style.color="var(--green)";
+          CH.forEach(function(ch){var sf=inp(ch,SECRET[ch]);if(sf)sf.value="";});
+          loadNotify(); poll();
+        }).catch(function(){note.textContent="⚠️ could not save"; note.style.color="var(--amber)";});
+    });
+    loadNotify();
+  })();
 
   // ── Google Drive sign-in ──────────────────────────────────────────────
   (function(){

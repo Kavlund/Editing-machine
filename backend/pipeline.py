@@ -2377,9 +2377,14 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             job["drive_link"] = drive_link
         job_path.write_text(json.dumps(job, indent=2))
 
-        # Exactly one Slack message per finished video, with the Drive link.
-        _slack(f":white_check_mark: *{client_name}* — `{folder}` is done."
-               + (f"\n{drive_link}" if drive_link else f" {size_mb:.1f} MB."))
+        # Ping the creator's chosen channel(s) — Telegram / Slack / Discord — with the
+        # Drive link. Configured in the Control Center; Slack via env still works too.
+        try:
+            from integrations import notify as _notify
+            _notify.send_finished(client_name, folder, drive_link or "",
+                                  lambda m: _log(job_path, m))
+        except Exception as _ne:
+            _log(job_path, f"notify skipped ({_ne})")
 
         # ── 9. Render intermediates are cleaned in the `finally` below, so cleanup
         #      runs on success AND on failure. A failed render must never leave its
@@ -2399,8 +2404,12 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         job = json.loads(job_path.read_text())
         client_name = job.get("client_name", "Unknown client")
         folder      = job.get("folder_name", job_id)
-        # Exactly one Slack message when a video fails.
-        _slack(f":x: *{client_name}* — `{folder}` failed. {str(exc)[:140]}")
+        # One failure ping to the creator's chosen channel(s).
+        try:
+            from integrations import notify as _notify
+            _notify.send_failed(client_name, folder, str(exc), lambda m: _log(job_path, m))
+        except Exception:
+            pass
 
     finally:
         # The render scratch dir is entirely ephemeral, so remove it whole on

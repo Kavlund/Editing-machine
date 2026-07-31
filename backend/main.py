@@ -1797,9 +1797,69 @@ def integrations_status():
     """What client integrations are wired up. Used to verify setup on the call."""
     try:
         from integrations import config as _icfg
-        return _icfg.status()
+        st = _icfg.status()
+        try:
+            from integrations import notify as _notify
+            st["notify"] = _notify.status()
+        except Exception:
+            pass
+        return st
     except Exception as e:
         return {"error": str(e)}
+
+
+# ── Notifications: choose which channel(s) get pinged when a video is done ─────
+@app.get("/api/notify")
+def get_notify():
+    """Current notification channels for the Control Center. Secrets are NEVER
+    echoed back — only a 'secret_set' flag and the non-secret target (chat id)."""
+    from integrations import notify as _n
+    cfg = _n.load()
+    out = {}
+    for ch, meta in _n.CHANNELS.items():
+        c = cfg.get(ch) or {}
+        entry = {"label": meta["label"], "enabled": bool(c.get("enabled")),
+                 "secret_field": meta["secret"], "target_field": meta["target"],
+                 "secret_set": bool((c.get(meta["secret"]) or "").strip())}
+        if meta["target"]:
+            entry["target_value"] = c.get(meta["target"], "")
+        out[ch] = entry
+    return {"channels": out}
+
+
+@app.post("/api/notify")
+async def save_notify(request: Request):
+    """Save channels. A secret is only overwritten when a new non-empty value is
+    sent, so leaving the field blank keeps the stored secret."""
+    from integrations import notify as _n
+    body = await request.json()
+    inc = body.get("channels") or {}
+    cfg = _n.stored()
+    for ch, meta in _n.CHANNELS.items():
+        if ch not in inc:
+            continue
+        e = inc[ch] or {}
+        c = cfg.setdefault(ch, {})
+        if "enabled" in e:
+            c["enabled"] = bool(e["enabled"])
+        sv = str(e.get(meta["secret"], "") or "").strip()
+        if sv:
+            c[meta["secret"]] = sv
+        if meta["target"] and meta["target"] in e:
+            c[meta["target"]] = str(e.get(meta["target"], "") or "").strip()
+    _n.save(cfg)
+    return {"ok": True, "status": _n.status()}
+
+
+@app.post("/api/notify/test")
+async def test_notify(request: Request):
+    """Send a test message on one channel, using any unsaved field values from the
+    UI on top of the saved config."""
+    from integrations import notify as _n
+    body = await request.json()
+    ch = str(body.get("channel", "")).strip()
+    ok, err = _n.test(ch, body.get("values") or {})
+    return {"ok": ok, "error": err}
 
 
 # ── Google Drive sign-in (OAuth) ────────────────────────────────────────────
