@@ -675,6 +675,159 @@ def _identify_filler_words(source_map: dict, speaker: str | None,
     return result
 
 
+def _plan_cuts(source_map: dict, speaker: str | None,
+               anthropic_key: str, log_fn, script: str = "") -> list:
+    """Claude drives the real edit: it removes whole BAD TAKES as source-time spans.
+
+    The filler pass above snips scattered 'um/øh' words; this pass handles the
+    thing that actually makes a raw recording unwatchable — the speaker recording
+    the same line two or three times in a row, false starts, and off-topic asides.
+    It reads the on-camera transcript (and the intended SCRIPT as ground truth when
+    present) and returns [{source, start, end, reason}] in each clip's OWN source
+    time. Those spans are applied by _apply_cut_spans — the exact, proven machinery
+    the manual Studio "cut this bit out" uses — so an AI cut is as reliable and as
+    re-render-stable as a hand cut.
+
+    Returning contiguous WORD ranges that we convert to source time (rather than
+    asking the model for raw float seconds, or scattered word indices) is what
+    makes it robust: the model only has to point at the first and last word of a
+    bad take, and we derive an exact, clampable time span from the transcript we
+    already trust.
+    """
+    if os.environ.get("AI_CUT_ENGINE", "1").strip() in ("0", "false", "off", "no"):
+        return []
+    script = (script or "").strip()
+    has_script = bool(script)
+    all_spans: list = []
+
+    system = (
+        "You are a senior video editor cutting a raw talking-head recording down to the "
+        "clean final take. The transcript may be in ANY language — work in whatever "
+        "language the speaker uses.\n\n"
+        "Your ONLY job here is to remove whole bad TAKES and dead weight, by pointing at "
+        "the first and last word of each run to delete. Remove:\n"
+        "  - RETAKES: the speaker records the SAME line more than once (to get it right). "
+        "Keep ONLY the LAST clean, complete delivery; delete every earlier attempt of that "
+        "line IN FULL.\n"
+        "  - ASIDES / SELF-DIRECTION between takes: 'no wait', 'let me do that again', "
+        "'take two', 'sorry', 'again', 'øh nej', 'lige igen', 'vent'. Always delete these.\n"
+        "  - FALSE STARTS: an abandoned phrase the speaker restarts a different way (delete "
+        "the abandoned run only).\n"
+        "  - Clear off-topic TANGENTS that are not part of the message.\n\n"
+        "Do NOT try to remove single filler sounds here — a separate pass handles those. "
+        "NEVER delete real content, and never delete so much that the message stops making "
+        "sense. When unsure whether something is a genuine retake, KEEP it.\n\n"
+        "Return STRICT JSON only, no prose:\n"
+        '{"cuts": [{"start_word": <int index>, "end_word": <int index, inclusive>, '
+        '"reason": "retake|aside|false_start|tangent"}]}\n'
+        "Each cut is a contiguous run of word indices to delete. If nothing should be cut, "
+        'return {"cuts": []}.'
+    )
+    if has_script:
+        system += (
+            "\n\nGROUND TRUTH — THE INTENDED SCRIPT:\n"
+            "You are given the SCRIPT the speaker meant to say. Treat it as the truth for "
+            "what belongs in the finished video. A retake is any scripted line that appears "
+            "in the transcript more than once — keep the LAST clean delivery, delete the rest. "
+            "Every scripted line must end up in the video EXACTLY ONCE.\n"
+            "Worked example — SCRIPT line: 'This is how you get big biceps.'\n"
+            "  Transcript: yeah oh so this is how you get big biceps  oh no shit I want to take "
+            "that again  oh this is how you get big biceps\n"
+            "  Delete the entire first attempt AND the aside 'oh no shit I want to take that "
+            "again'. Keep only the final clean delivery, so the line appears once.\n"
+            "The speaker may paraphrase or ad-lib REAL content that is not word-for-word in the "
+            "script — never delete genuine content just because it differs from the script."
+        )
+
+    for name, s in source_map.items():
+        if not s["trans"].exists():
+            continue
+        words = _speaker_words(json.loads(s["trans"].read_text()), speaker)
+        if len(words) < 4:
+            continue
+        numbered = "\n".join(f"[{i}] {w.get('text','')}" for i, w in enumerate(words))
+        user_content = f"Transcript words:\n{numbered}\n\n"
+        if has_script:
+            user_content += f"The intended SCRIPT (ground truth):\n\"\"\"\n{script[:8000]}\n\"\"\"\n\n"
+        user_content += 'JSON of the runs to delete (object with a "cuts" array):'
+
+        raw = ""
+        for model in ("claude-opus-5", "claude-sonnet-5"):
+            try:
+                import anthropic as ant
+                sdk = ant.Anthropic(api_key=anthropic_key, timeout=180.0, max_retries=3)
+                # Stream: adaptive thinking (best for the retake reasoning) plus a
+                # generous cap needs streaming to dodge the SDK's timeout guard.
+                with sdk.messages.stream(
+                    model=model,
+                    max_tokens=16000,
+                    thinking={"type": "adaptive"},
+                    system=system,
+                    messages=[{"role": "user", "content": user_content}],
+                ) as stream:
+                    raw = _resp_text(stream.get_final_message())
+                break
+            except Exception as e:
+                if model == "claude-opus-5":
+                    log_fn(f"cut engine: Opus unavailable ({str(e)[:80]}), trying Sonnet")
+                    continue
+                log_fn(f"cut engine: planning failed for {name} ({str(e)[:100]}) — no AI cuts on this clip")
+                raw = ""
+
+        cuts = []
+        try:
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            if m:
+                cuts = (json.loads(m.group()) or {}).get("cuts") or []
+        except Exception:
+            cuts = []
+
+        spans, removed = [], 0
+        for c in cuts:
+            if not isinstance(c, dict):
+                continue
+            try:
+                i0 = int(c["start_word"]); i1 = int(c["end_word"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            i0 = max(0, min(i0, len(words) - 1))
+            i1 = max(0, min(i1, len(words) - 1))
+            if i1 < i0:
+                i0, i1 = i1, i0
+            t0 = float(words[i0]["start"]) - 0.03
+            t1 = float(words[i1].get("end", words[i1]["start"])) + 0.03
+            if t1 <= t0:
+                continue
+            spans.append({"source": name, "start": round(max(0.0, t0), 3),
+                          "end": round(t1, 3), "reason": str(c.get("reason", "cut"))[:20]})
+            removed += (i1 - i0 + 1)
+
+        # Bound the blast radius. WITH a script, heavy removal is legitimate (three
+        # takes of every line keeps only a third) — so validate against the script's
+        # length, exactly like the filler guard, not against a flat percentage. WITHOUT
+        # a script, retake detection is far less certain, so cap removal conservatively.
+        kept = len(words) - removed
+        if has_script:
+            script_words = len(re.findall(r"[^\W\d_]+|\d+", script, flags=re.UNICODE))
+            too_aggressive = script_words > 0 and kept < 0.45 * script_words
+            guard = f"kept {kept} words vs script's ~{script_words}"
+        else:
+            too_aggressive = removed > 0.45 * len(words)
+            guard = f"removed {removed}/{len(words)} words"
+        if too_aggressive:
+            log_fn(f"cut engine: cut looks too heavy ({guard}) — skipping it for {name} to stay safe")
+            continue
+        if spans:
+            reasons = ", ".join(sorted({sp["reason"] for sp in spans}))
+            log_fn(f"cut engine: {name} — removing {len(spans)} bad take(s) [{reasons}], "
+                   f"{removed} word(s) of {len(words)}")
+            all_spans += spans
+        else:
+            log_fn(f"cut engine: {name} — no retakes or false starts found")
+
+    return all_spans
+
+
 # ── B-roll AI matching ───────────────────────────────────────────────────────
 
 def _extract_frame(video: Path, out_jpg: Path, t: float | None = None):
@@ -1631,6 +1784,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         zoom_events    = []
         graphics_plan  = []
         filler_indices = None
+        ai_cut_spans   = []
         anthropic_key  = os.environ.get("ANTHROPIC_API_KEY", "")
 
         directives = {}
@@ -1659,6 +1813,18 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                     script=job.get("script", ""))
                 total_cut = sum(len(v) for v in (filler_indices or {}).values())
                 _log(job_path, f"AI: {total_cut} filler word(s) marked for removal")
+
+                # Claude drives the real cut: remove whole bad TAKES (retakes,
+                # false starts, asides) as source-time spans. This is the thing
+                # that makes a raw recording watchable — cutting the "she said it
+                # three times" repeats — and it uses the same proven cut machinery
+                # as a hand edit, so it survives re-renders.
+                _check_cancelled(job_path)
+                _log(job_path, "AI: reviewing the recording for retakes and false starts to cut...")
+                ai_cut_spans = _plan_cuts(
+                    source_map, editing.get("caption_speaker", "speaker_0"),
+                    anthropic_key, lambda m: _log(job_path, m),
+                    script=job.get("script", ""))
 
             # Hook / keyword-emphasis / zoom come from the per-video instructions
             # (or a mandatory hook rule).
@@ -1802,13 +1968,15 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
             _log(job_path, f"Studio: {len(split_points)} split(s) applied "
                            f"({before} → {len(edl['ranges'])} ranges)")
 
-        # Studio "cut a bit out" edits: remove SOURCE-time spans from the ranges.
-        # Source time is stable across re-renders, so a cut survives regeneration.
-        cut_spans = job.get("cut_spans") or []
+        # Cut-out edits: remove SOURCE-time spans from the ranges. Two sources feed
+        # this — the AI cut engine's bad-take removals and the Studio "cut a bit out"
+        # hand edits — and they use the identical mechanism. Source time is stable
+        # across re-renders, so every cut survives regeneration.
+        cut_spans = list(ai_cut_spans) + (job.get("cut_spans") or [])
         if cut_spans:
             before = len(edl["ranges"])
             edl["ranges"] = _apply_cut_spans(edl["ranges"], cut_spans)
-            _log(job_path, f"Studio: {len(cut_spans)} cut(s) applied "
+            _log(job_path, f"Cuts: {len(ai_cut_spans)} AI + {len(job.get('cut_spans') or [])} manual "
                            f"({before} → {len(edl['ranges'])} ranges)")
 
         # Studio caption-TEXT edits (fix a typo, reword a line). build_overlays
