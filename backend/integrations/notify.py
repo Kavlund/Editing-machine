@@ -13,6 +13,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -56,8 +57,20 @@ def save(cfg: dict) -> None:
 def _post_json(url: str, payload: dict, timeout: int = 8) -> int:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.status
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        # The API's error body carries the real reason (e.g. Telegram's
+        # "chat not found"); surface it instead of a bare "400 Bad Request".
+        desc = ""
+        try:
+            body = e.read().decode("utf-8", "replace")
+            j = json.loads(body)
+            desc = j.get("description") or j.get("message") or j.get("error") or body[:200]
+        except Exception:
+            desc = ""
+        raise ValueError(f"{e.code}: {desc}".strip().rstrip(":") if desc else f"HTTP {e.code}") from None
 
 
 def _send_telegram(c: dict, text_html: str) -> None:
