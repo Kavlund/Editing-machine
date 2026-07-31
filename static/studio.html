@@ -455,7 +455,10 @@
   function paintTitleGuide(t){
     var g=$('titleguide'),tt=S.title||{};
     var dur=(tt.duration!=null?tt.duration:4.5);
-    var show=S.capOff&&tt.enabled&&(tt.text||'').trim()&&t>=0&&t<=dur;
+    var show=!!(S.capOff&&tt.enabled&&(tt.text||'').trim()&&t>=0&&t<=dur);
+    // During a scrub the card only needs a rebuild when it toggles on/off.
+    if(scrubbing&&show===_titleGuideOn)return;
+    _titleGuideOn=show;
     if(!show){g.style.display='none';return;}
     var stageEl=$('stage'),stageH=stageEl.clientHeight||533,stageW=stageEl.clientWidth||300;
     var col=/^#[0-9a-f]{6}$/i.test(tt.color||'')?tt.color:'#ffffff';
@@ -506,12 +509,16 @@
     }
     return {pos:pos,title:title,lines:lines,value:value};
   }
-  var _gfxGuideIdx=-1;
+  var _gfxGuideIdx=-1,_titleGuideOn=false;
   function paintGfxGuide(t){
     var wrap=$('gfxguide');
     if(!S.capOff){wrap.style.display='none';_gfxGuideIdx=-1;return;}
     var gi=-1;
     for(var i=0;i<S.graphics.length;i++){var s=S.graphics[i].start_sec||0,e=s+(S.graphics[i].duration_sec||3);if(t>=s&&t<e){gi=i;break;}}
+    // While dragging the playhead, the active graphic's content/position never
+    // changes — only WHICH graphic is active does. Skip the innerHTML rebuild +
+    // clientHeight/Width reflow when it hasn't changed, so a fast scrub can't storm.
+    if(scrubbing&&gi===_gfxGuideIdx)return;
     if(gi<0){wrap.style.display='none';wrap.innerHTML='';_gfxGuideIdx=-1;return;}
     _gfxGuideIdx=gi;var g=S.graphics[gi];
     var ac=(g.props&&g.props.accent)||S.gfxColor||S.brandColors[0]||'#fbbf24',ink='#0a0b10';
@@ -963,19 +970,24 @@
     // ---- scrub: drag the playhead pin, or click/drag the time ruler, to seek ----
     // The pin follows the mouse instantly (never the video's laggy clock). The actual
     // video seek is throttled to one per animation frame so streamed seeks can't storm.
-    function _applySeek(){_seekRAF=0;if(_seekTarget==null)return;var v=$('video');try{v.currentTime=_seekTarget;}catch(e){}}
+    function _applySeek(){_seekRAF=0;if(_seekTarget==null)return;var v=$('video');try{v.currentTime=_seekTarget;}catch(e){}updateLiveCaption(_seekTarget);}
     function seekTo(clientX){
       var r=$('ruler').getBoundingClientRect();
       var frac=Math.max(0,Math.min(1,(clientX-r.left)/r.width));
       var t=frac*(S.dur||0);
+      // The pin + time label follow the mouse instantly (cheap). The video seek AND
+      // the caption/graphic/title repaint are the heavy work — both run at most once
+      // per animation frame in _applySeek, so a fast drag can't storm them.
       $('playhead').style.left='calc('+LANEX+'px + '+frac+' * (100% - '+LANEX+'px))';
       $('cur').textContent=fmt(t);
-      updateLiveCaption(t);
       _seekTarget=t;
       if(!_seekRAF)_seekRAF=requestAnimationFrame(_applySeek);
     }
     function endScrub(){if(!scrubbing)return;scrubbing=false;document.body.classList.remove('scrubbing');
-      if(_seekTarget!=null){var v=$('video');try{v.currentTime=_seekTarget;}catch(e){}}}   // land exactly where released
+      // land exactly where released, and force ONE full repaint now that scrubbing is
+      // off — the per-frame paints during the drag were guarded, and the video's own
+      // 'seeked' event is suppressed while the editor video is paused, so repaint here.
+      if(_seekTarget!=null){var v=$('video');try{v.currentTime=_seekTarget;}catch(e){}updateLiveCaption(_seekTarget);}}
     function startScrub(e){scrubbing=true;document.body.classList.add('scrubbing');seekTo(e.clientX);e.preventDefault();e.stopPropagation();}
     $('ruler').addEventListener('pointerdown',startScrub);
     $('phgrab').addEventListener('pointerdown',startScrub);
