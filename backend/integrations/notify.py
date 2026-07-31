@@ -121,15 +121,20 @@ def _fmt(channel: str, done: bool, client: str, video: str, link: str = "", err:
 
 def _dispatch(done: bool, client: str, video: str, link: str, err: str, log) -> None:
     cfg = load()
+    any_enabled = False
     for ch in CHANNELS:
         c = cfg.get(ch) or {}
         if not c.get("enabled"):
             continue
+        any_enabled = True
         try:
             _SENDERS[ch](c, _fmt(ch, done, client, video, link, err))
             log(f"notify: {'done' if done else 'failed'} sent via {ch}")
         except Exception as e:  # never let a channel break the pipeline
             log(f"notify: {ch} send failed ({e})")
+    if not any_enabled:
+        log("notify: no channel is enabled on this instance — turn one on in the "
+            "Control Center and click Save channels (a green Send test is not enough)")
 
 
 def send_finished(client: str, video: str, link: str = "", log=lambda m: None) -> None:

@@ -375,7 +375,7 @@
         res.textContent="Sending…"; res.style.color="var(--muted)";
         fetch("/api/notify/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({channel:ch,values:collect(ch)})})
           .then(function(r){return r.json();}).then(function(d){
-            if(d.ok){res.textContent="✅ Sent — check "+ch; res.style.color="var(--green)";}
+            if(d.ok){var e=en(ch);if(e)e.checked=true;res.textContent="✅ Sent — now click Save channels to turn it on";res.style.color="var(--green)";}
             else{res.textContent="⚠️ "+(d.error||"failed"); res.style.color="var(--amber)";}
           }).catch(function(){res.textContent="⚠️ request failed"; res.style.color="var(--amber)";});
       });
