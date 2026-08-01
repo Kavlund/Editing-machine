@@ -79,6 +79,51 @@ def speaker_loudness(source_map: dict, editing: dict, sr: int = 16000) -> dict:
     return out
 
 
+def loud_word_keep(video_path, words, sr: int = 16000, gate_db: float = 10.0,
+                   min_gap_db: float = 9.0, min_share: float = 0.15):
+    """Per-WORD keep-mask that isolates the close-mic on-camera voice by loudness.
+
+    In the reader+repeat workflow, an off-camera reader says each line and the on-camera
+    client repeats it. The on-camera person is on the close mic (loud); the reader is far
+    (much quieter) — a stable 15-20 dB gap. The existing speaker pick trusts the
+    diarization SPEAKER LABELS, which drift and merge the two voices partway through, so
+    the reader survives. This gates per word by loudness instead, catching a reader word
+    even when it was mislabeled as the on-camera speaker.
+
+    Returns a list of booleans aligned to `words` (True = keep), or None to keep all when
+    the loudness is NOT clearly bimodal — so a genuine single speaker (even a dynamic one)
+    or a real two-person talk at similar levels is never chopped.
+    """
+    audio = _decode_mono(video_path, sr)
+    if audio is None:
+        return None
+    rms = []
+    for w in words:
+        if w.get("type") != "word" or w.get("start") is None:
+            rms.append(None); continue
+        try:
+            a = max(0, int(float(w["start"]) * sr))
+            b = min(audio.size, max(a + 1, int(float(w.get("end", w["start"])) * sr)))
+        except (TypeError, ValueError):
+            rms.append(None); continue
+        rms.append(_rms_db(audio[a:b]) if b > a else None)
+    vals = [r for r in rms if r is not None and r > -55]        # voiced words only
+    if len(vals) < 10:
+        return None
+    s = sorted(vals)
+    oncam = s[int(0.75 * (len(s) - 1))]                          # the close-mic level
+    gate = oncam - gate_db
+    quiet = [r for r in vals if r < gate]
+    loud = [r for r in vals if r >= gate]
+    # Only act on a genuine reader+repeat signature: a SUSTAINED quiet population that is
+    # clearly separated from the on-camera voice. Otherwise keep everything.
+    if not loud or len(quiet) < max(6, int(min_share * len(vals))):
+        return None
+    if (float(np.median(loud)) - float(np.median(quiet))) < min_gap_db:
+        return None
+    return [(r is None) or (r >= gate) for r in rms]
+
+
 def choose_kept_speaker(per_speaker: dict, keep: str = "louder",
                         margin_db: float = 3.0, min_word_share: float = 0.15):
     """Which speaker to keep for ONE source, or None to keep everyone.

@@ -1769,13 +1769,46 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                         for _w in json.loads(_s["trans"].read_text()).get("words", []):
                             if _w.get("type") == "word" and _w.get("start") is not None:
                                 _spk_ids.add(_w.get("speaker_id", "speaker_0"))
-                if len(_spk_ids) >= 2:
-                    _keep = str(job.get("keep_speaker", "louder")).strip().lower()
-                    if _keep == "both":
+                _keep = str(job.get("keep_speaker", "louder")).strip().lower()
+                if _keep == "both":
+                    if len(_spk_ids) >= 2:
                         editing["caption_speaker"] = None
-                        _log(job_path, "speaker-select: two voices — keeping ALL (keep=both)")
-                    else:
-                        from speaker_select import speaker_loudness, choose_kept_speaker
+                        _log(job_path, "speaker-select: keeping ALL voices (keep=both)")
+                else:
+                    from speaker_select import speaker_loudness, choose_kept_speaker, loud_word_keep
+                    # 1) PER-WORD LOUDNESS GATE first. The on-camera client is on the close
+                    #    mic (loud); the off-camera reader is far (much quieter, a stable
+                    #    15-20 dB gap). Gating per WORD by loudness survives the diarization
+                    #    drifting and MERGING the two voices partway through — the real
+                    #    failure (good for ~12s, then the reader's words get the on-camera
+                    #    label and slip in). Self-guards: a no-op unless the loudness is
+                    #    clearly bimodal, so a single or genuine two-person clip is untouched.
+                    _gated_any = False
+                    for _n, _s in source_map.items():
+                        try:
+                            if not _s["trans"].exists():
+                                continue
+                            _tr = json.loads(_s["trans"].read_text())
+                            _words = _tr.get("words", [])
+                            _mask = loud_word_keep(_s["norm"], _words)
+                            if _mask is None:
+                                continue
+                            _dropped = sum(1 for w, m in zip(_words, _mask)
+                                           if (not m) and w.get("type") == "word")
+                            if not _dropped:
+                                continue
+                            _tr["words"] = [w for w, m in zip(_words, _mask) if m]
+                            _s["trans"].write_text(json.dumps(_tr))
+                            _gated_any = True
+                            _log(job_path, f"speaker-select [{_n}]: loudness gate removed "
+                                           f"{_dropped} quiet off-camera word(s), kept the close-mic voice")
+                        except Exception:
+                            continue
+                    if _gated_any:
+                        editing["caption_speaker"] = None
+                    elif len(_spk_ids) >= 2:
+                        # 2) Fall back to the diarization-label pick when loudness is not
+                        #    clearly bimodal but two labelled speakers exist.
                         _loud = speaker_loudness(source_map, editing)
                         _kept_any = False
                         for _n, _s in source_map.items():
