@@ -729,9 +729,15 @@ def _plan_cuts(source_map: dict, speaker: str | None,
         "language the speaker uses.\n\n"
         "Your ONLY job here is to remove whole bad TAKES and dead weight, by pointing at "
         "the first and last word of each run to delete. Remove:\n"
-        "  - RETAKES: the speaker records the SAME line more than once (to get it right). "
-        "Keep ONLY the LAST clean, complete delivery; delete every earlier attempt of that "
-        "line IN FULL.\n"
+        "  - RETAKES & READ-ALONG DUPLICATES (the most important case): the SAME line appears "
+        "TWICE in a row. Two ways this happens — the speaker records a line more than once to "
+        "get it right, OR (VERY common) an off-camera reader reads the line first and the "
+        "on-camera speaker repeats it right after. EITHER WAY, when the same words appear twice "
+        "back to back (even with a short aside between), DELETE THE EARLIER occurrence IN FULL and "
+        "keep only the LAST clean delivery. Do this confidently every time — two identical or "
+        "near-identical consecutive lines are ALWAYS a duplicate to collapse to one, never real "
+        "repetition the video needs. If a whole video is built this way (every line read then "
+        "repeated), remove EVERY earlier read so each line ends up in the video exactly once.\n"
         "  - ASIDES / SELF-DIRECTION between takes: 'no wait', 'let me do that again', "
         "'take two', 'sorry', 'again', 'øh nej', 'lige igen', 'vent'. Always delete these.\n"
         "  - FALSE STARTS: an abandoned phrase the speaker restarts a different way (delete "
@@ -739,7 +745,8 @@ def _plan_cuts(source_map: dict, speaker: str | None,
         "  - Clear off-topic TANGENTS that are not part of the message.\n\n"
         "Do NOT try to remove single filler sounds here — a separate pass handles those. "
         "NEVER delete real content, and never delete so much that the message stops making "
-        "sense. When unsure whether something is a genuine retake, KEEP it.\n\n"
+        "sense. When unsure whether something is a genuine retake, KEEP it — BUT two identical "
+        "consecutive lines are NOT a doubt case: always collapse them to the last one.\n\n"
         "Return STRICT JSON only, no prose:\n"
         '{"cuts": [{"start_word": <int index>, "end_word": <int index, inclusive>, '
         '"reason": "retake|aside|false_start|tangent"}]}\n'
@@ -835,7 +842,10 @@ def _plan_cuts(source_map: dict, speaker: str | None,
             too_aggressive = script_words > 0 and kept < 0.45 * script_words
             guard = f"kept {kept} words vs script's ~{script_words}"
         else:
-            too_aggressive = removed > 0.45 * len(words)
+            # A reader-then-repeat video legitimately loses ~half (every line is read once
+            # then repeated), so allow up to 60% without a script; a normal video never has
+            # that much genuine retake, so this still bounds a runaway model.
+            too_aggressive = removed > 0.60 * len(words)
             guard = f"removed {removed}/{len(words)} words"
         if too_aggressive:
             log_fn(f"cut engine: cut looks too heavy ({guard}) — skipping it for {name} to stay safe")

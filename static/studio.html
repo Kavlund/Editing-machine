@@ -71,6 +71,33 @@
   .brollcard .bt{margin-bottom:3px}
   .modebadge{font-size:11px;font-weight:600;color:#34d399;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);border-radius:7px;padding:3px 9px;white-space:nowrap}
   .modebadge.edit{color:#fbbf24;background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.32)}
+  /* Ask-Claude chat: a floating assistant that drives the same /api/chat tools as the
+     job-list chat, scoped to this video. Say what you want, it edits and re-renders. */
+  #aiFab{position:fixed;right:20px;bottom:20px;z-index:60;width:54px;height:54px;border-radius:50%;border:none;cursor:pointer;background:linear-gradient(135deg,#7c74ff,#4f46e5);color:#fff;box-shadow:0 12px 30px rgba(79,70,229,.5);display:flex;align-items:center;justify-content:center}
+  #aiFab svg{width:24px;height:24px}
+  #aiPanel{position:fixed;right:20px;bottom:86px;z-index:60;width:min(384px,calc(100vw - 40px));height:min(560px,72vh);background:#12141c;border:1px solid #2a2d3a;border-radius:16px;box-shadow:0 30px 70px rgba(0,0,0,.6);display:none;flex-direction:column;overflow:hidden}
+  #aiPanel.on{display:flex}
+  .ai-head{padding:13px 15px;border-bottom:1px solid #22242e;display:flex;align-items:center;gap:10px}
+  .ai-head .ai-t{font-weight:700;font-size:14px}
+  .ai-head .ai-s{font-size:11px;color:#8a8f9e}
+  .ai-head .ai-x{margin-left:auto;background:none;border:none;color:#8a8f9e;cursor:pointer;font-size:17px;line-height:1}
+  .ai-msgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:9px}
+  .ai-welcome{color:#8a8f9e;font-size:13px;line-height:1.5}
+  .ai-hints{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px}
+  .ai-hint{font-size:12px;background:rgba(124,116,255,.14);border:1px solid rgba(124,116,255,.3);color:#c9c4ff;border-radius:999px;padding:5px 11px;cursor:pointer;text-align:left}
+  .ai-msg{max-width:86%;font-size:13px;line-height:1.45;padding:9px 12px;border-radius:12px;white-space:pre-wrap;word-wrap:break-word}
+  .ai-msg.u{align-self:flex-end;background:#4f46e5;color:#fff;border-bottom-right-radius:4px}
+  .ai-msg.a{align-self:flex-start;background:#1b1e28;border:1px solid #22242e;color:#e7e9f0;border-bottom-left-radius:4px}
+  .ai-chip{align-self:flex-start;font-size:11px;color:#8ff0b6;background:rgba(67,209,127,.12);border:1px solid rgba(67,209,127,.3);border-radius:8px;padding:4px 9px}
+  .ai-chip.render{color:#fbbf24;background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.3)}
+  .ai-reload{align-self:flex-start;font-size:12px;font-weight:600;color:#04140b;background:#43d17f;border:none;border-radius:8px;padding:7px 13px;cursor:pointer}
+  .ai-in{display:flex;gap:8px;padding:11px;border-top:1px solid #22242e}
+  .ai-in textarea{flex:1;resize:none;background:#0c0e15;border:1px solid #2a2d3a;border-radius:10px;color:#e7e9f0;font-family:inherit;font-size:13px;padding:9px 11px;max-height:110px}
+  .ai-in button{background:#4f46e5;border:none;color:#fff;border-radius:10px;padding:0 15px;cursor:pointer;font-weight:600;font-size:13px}
+  .ai-in button:disabled{opacity:.5;cursor:default}
+  .ai-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#8a8f9e;margin:0 2px;animation:aiblink 1.2s infinite}
+  .ai-dot:nth-child(2){animation-delay:.2s}.ai-dot:nth-child(3){animation-delay:.4s}
+  @keyframes aiblink{0%,60%,100%{opacity:.3}30%{opacity:1}}
   .transport{width:100%;max-width:300px;display:flex;flex-direction:column;gap:9px}
   .tbtns{display:flex;align-items:center;gap:8px}
   .icon-btn{width:34px;height:34px;border-radius:9px;border:1px solid var(--border-2);background:var(--raised);color:var(--text);display:grid;place-items:center;cursor:pointer;transition:.15s;flex:none}
@@ -1156,6 +1183,87 @@
       .then(function(r){return r.json();}).then(function(){toast('Saved — re-rendering your video');setTimeout(function(){location.href='/#job-'+jobId;},1400);})
       .catch(function(){$('save').disabled=false;$('save').textContent='Save & re-render';toast('Could not save');});
   }
+})();
+</script>
+<button id="aiFab" title="Ask Claude to edit this video">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+</button>
+<div id="aiPanel">
+  <div class="ai-head">
+    <div><div class="ai-t">Ask Claude</div><div class="ai-s">Tell it what to change on this video</div></div>
+    <button class="ai-x" id="aiClose" title="Close">✕</button>
+  </div>
+  <div class="ai-msgs" id="aiMsgs"></div>
+  <div class="ai-in">
+    <textarea id="aiInput" rows="1" placeholder="e.g. move the captions up, add a takeover when she lists things, make the follow button later"></textarea>
+    <button id="aiSend">Send</button>
+  </div>
+</div>
+<script>
+// Ask-Claude editor chat: posts to the same /api/chat tool loop as the job-list chat,
+// scoped to THIS video (jobId is in scope from the main script). On a re-render it polls
+// the job and offers a reload so the new render loads. Self-contained.
+(function(){
+  var fab=document.getElementById('aiFab'),panel=document.getElementById('aiPanel'),
+      msgs=document.getElementById('aiMsgs'),input=document.getElementById('aiInput'),
+      send=document.getElementById('aiSend'),closeb=document.getElementById('aiClose');
+  var _jid=new URLSearchParams(location.search).get('job');
+  if(!fab||!_jid) return;
+  var history=[],pending=false,welcomed=false,poll=null;
+  function scroll(){msgs.scrollTop=msgs.scrollHeight;}
+  function welcome(){
+    if(welcomed)return; welcomed=true;
+    var w=document.createElement('div');w.className='ai-welcome';
+    w.innerHTML='Tell me what to change and I will do it on this video, then re-render.'
+      +'<div class="ai-hints">'
+      +'<button class="ai-hint">Move the captions up</button>'
+      +'<button class="ai-hint">Make the captions bigger</button>'
+      +'<button class="ai-hint">The colour is too warm</button>'
+      +'<button class="ai-hint">Remove the last graphic</button>'
+      +'</div>';
+    msgs.appendChild(w);
+    [].forEach.call(w.querySelectorAll('.ai-hint'),function(b){b.addEventListener('click',function(){sendMsg(b.textContent);});});
+  }
+  function add(role,text){var d=document.createElement('div');d.className='ai-msg '+(role==='user'?'u':'a');d.textContent=text;msgs.appendChild(d);scroll();return d;}
+  function loading(){var d=document.createElement('div');d.className='ai-msg a';d.innerHTML='<span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span>';msgs.appendChild(d);scroll();return d;}
+  function chip(text,cls){var c=document.createElement('div');c.className='ai-chip'+(cls?' '+cls:'');c.textContent=text;msgs.appendChild(c);scroll();return c;}
+  function watchRender(){
+    if(poll)return;
+    var c=chip('Re-rendering this video with your change…','render');
+    poll=setInterval(function(){
+      fetch('/api/jobs/'+_jid,{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
+        var st=j&&j.status;
+        if(st==='done'){clearInterval(poll);poll=null;c.textContent='Video updated.';c.className='ai-chip';
+          var b=document.createElement('button');b.className='ai-reload';b.textContent='Reload editor to see it';
+          b.addEventListener('click',function(){location.reload();});msgs.appendChild(b);scroll();}
+        else if(st==='failed'||st==='cancelled'){clearInterval(poll);poll=null;c.textContent='Re-render '+st+'.';}
+      }).catch(function(){});
+    },3500);
+  }
+  function sendMsg(text){
+    text=(text||input.value||'').trim(); if(!text||pending)return;
+    var wl=msgs.querySelector('.ai-welcome'); if(wl)wl.remove();
+    input.value='';input.style.height='';
+    add('user',text); pending=true; send.disabled=true;
+    var ld=loading();
+    fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({message:text,job_id:_jid,client_id:null,history:history})})
+    .then(function(r){return r.json();}).then(function(data){
+      ld.remove();
+      var reply=(data&&data.reply)||'Done.'; add('assistant',reply);
+      history.push({role:'user',content:text});history.push({role:'assistant',content:reply});
+      ((data&&data.actions)||[]).forEach(function(a){
+        if(a.type==='job_rerendering')watchRender();
+        else if(a.type==='settings_updated'){var k=Object.keys(a.changes||{});chip((k.length?k.join(', ')+' ':'')+'updated');}
+      });
+    }).catch(function(){ld.remove();add('assistant','Something went wrong. Please try again.');})
+    .then(function(){pending=false;send.disabled=false;if(panel.classList.contains('on'))input.focus();});
+  }
+  fab.addEventListener('click',function(){var on=panel.classList.toggle('on');if(on){welcome();input.focus();scroll();}});
+  closeb.addEventListener('click',function(){panel.classList.remove('on');});
+  send.addEventListener('click',function(){sendMsg();});
+  input.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}});
+  input.addEventListener('input',function(){input.style.height='auto';input.style.height=Math.min(input.scrollHeight,110)+'px';});
 })();
 </script>
 </body>
