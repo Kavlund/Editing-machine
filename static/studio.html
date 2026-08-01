@@ -61,6 +61,14 @@
   .titleguide .tg-main{font-weight:900;line-height:1.05;text-transform:uppercase;text-shadow:0 3px 14px rgba(0,0,0,.72)}
   .gfxguide{position:absolute;inset:0;display:none;pointer-events:none}
   .gfxtag{position:absolute;top:8px;left:50%;transform:translateX(-50%);font-size:9px;letter-spacing:.11em;text-transform:uppercase;opacity:.75}
+  /* Live b-roll preview: sits behind captions/graphics (DOM order), in front of the
+     video. A full cutaway covers the frame; a photo card sits up top. It shows WHERE
+     and WHEN the cutaway plays — the exact clip frame renders on export. */
+  .brollguide{position:absolute;inset:0;display:none;pointer-events:none}
+  .brollfull{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;background:rgba(6,12,22,.85);color:#dbe9ff;text-align:center;padding:14px}
+  .brollfull .bt,.brollcard .bt{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#60a5fa;font-weight:800}
+  .brollcard{position:absolute;top:9%;left:50%;transform:translateX(-50%);max-width:76%;background:rgba(6,12,22,.9);border:1.5px solid #60a5fa;border-radius:11px;padding:10px 13px;color:#dbe9ff;font-size:11px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+  .brollcard .bt{margin-bottom:3px}
   .transport{width:100%;max-width:300px;display:flex;flex-direction:column;gap:9px}
   .tbtns{display:flex;align-items:center;gap:8px}
   .icon-btn{width:34px;height:34px;border-radius:9px;border:1px solid var(--border-2);background:var(--raised);color:var(--text);display:grid;place-items:center;cursor:pointer;transition:.15s;flex:none}
@@ -178,6 +186,7 @@
             <div class="vload" id="vload"><span class="spin"></span>Loading video…</div>
             <div class="novid" id="novid"><div>Couldn't load the video here.</div><a class="chip" id="drivelink" target="_blank" rel="noopener">Open in Drive</a></div>
             <div class="safe"></div>
+            <div class="brollguide" id="brollguide"></div>
             <div class="capguide" id="capguide" tabindex="0"><small>Captions — drag to move</small><span id="capguidetext">Captions</span></div>
             <div class="titleguide" id="titleguide"><span class="tg-hand" id="tgHand"></span><span class="tg-main" id="tgMain"></span></div>
             <div class="gfxguide" id="gfxguide"></div>
@@ -448,7 +457,7 @@
       for(var j=0;j<S.captions.length;j++){var d=Math.min(Math.abs(S.captions[j].start-t),Math.abs(S.captions[j].end-t));if(d<bd){bd=d;near=S.captions[j];}}
       el.textContent=near.text;g.style.opacity='.32';el.style.color=S.capColors[norm(near.orig)]||S.caption.color||'#ffffff';
     } else {el.textContent='Captions';g.style.opacity='.5';}
-    paintTitleGuide(t);paintGfxGuide(t);
+    paintBrollGuide(t);paintTitleGuide(t);paintGfxGuide(t);
   }
   // Live TITLE overlay — shows the title card on the frame during its window, in its
   // colour/bg. Clean-preview mode only, where the burned title is gone (no double).
@@ -509,7 +518,26 @@
     }
     return {pos:pos,title:title,lines:lines,value:value};
   }
-  var _gfxGuideIdx=-1,_titleGuideOn=false;
+  var _gfxGuideIdx=-1,_titleGuideOn=false,_brollGuideIdx=-1;
+  // Live b-roll cutaway preview. B-roll has no burned-in overlay to show in clean
+  // preview (the proxy is the clean speaker), so a placed cutaway was invisible while
+  // editing even though it is on the timeline. This shows its presence, timing and clip
+  // name during its window; the actual clip frame renders on export.
+  function paintBrollGuide(t){
+    var wrap=$('brollguide');
+    if(!S.capOff){wrap.style.display='none';_brollGuideIdx=-1;return;}
+    var bi=-1;
+    for(var i=0;i<S.broll.length;i++){var st=(S.broll[i].at_sec!=null)?S.broll[i].at_sec:(S.broll[i].start_in_output||0);var e=st+(S.broll[i].duration||2.5);if(t>=st&&t<e){bi=i;break;}}
+    if(scrubbing&&bi===_brollGuideIdx)return;
+    if(bi<0){wrap.style.display='none';wrap.innerHTML='';_brollGuideIdx=-1;return;}
+    _brollGuideIdx=bi;var b=S.broll[bi],name=(b.file||'clip').split('/').pop();
+    if(b.is_image&&b.mode==='card'){
+      wrap.innerHTML='<div class="brollcard"><div class="bt">▣ B-roll photo</div>'+esc(name)+'</div>';
+    } else {
+      wrap.innerHTML='<div class="brollfull"><div class="bt">▶ B-roll cutaway</div>'+esc(name)+'</div>';
+    }
+    wrap.style.display='block';
+  }
   function paintGfxGuide(t){
     var wrap=$('gfxguide');
     if(!S.capOff){wrap.style.display='none';_gfxGuideIdx=-1;return;}
@@ -521,7 +549,7 @@
     if(scrubbing&&gi===_gfxGuideIdx)return;
     if(gi<0){wrap.style.display='none';wrap.innerHTML='';_gfxGuideIdx=-1;return;}
     _gfxGuideIdx=gi;var g=S.graphics[gi];
-    var ac=(g.props&&g.props.accent)||S.gfxColor||S.brandColors[0]||'#fbbf24',ink='#0a0b10';
+    var ac=readable((g.props&&g.props.accent)||S.gfxColor||S.brandColors[0]||'#fbbf24'),ink='#0a0b10';
     var stageEl=$('stage'),stageH=stageEl.clientHeight||533,stageW=stageEl.clientWidth||300;
     var ox=(+g.x||0)*stageW,oy=(+g.y||0)*stageH,off='translate('+ox+'px,'+oy+'px)';
     var D='pointer-events:auto;cursor:grab" data-draggable="1"';   // closes style, opens the drag attr
@@ -575,6 +603,11 @@
   }
   function seg(id,a,v){var g=$(id);if(!g)return;[].forEach.call(g.children,function(b){b.classList.toggle('on',b.getAttribute(a)===v);});}
   function normHex(v){v=String(v||'').trim();var m=/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(v);if(!m)return null;var h=m[1].toLowerCase();if(h.length===3)h=h.replace(/./g,function(c){return c+c;});return '#'+h;}
+  // Same logic as the render's readableAccent (remotion/util.ts): a dark brand colour
+  // is blended toward white so dark ink reads on the pill. The editor preview used the
+  // raw colour, which is why a dark accent looked like an unreadable blob here while the
+  // export was fine — this makes the preview match the export.
+  function readable(v){var m=/^#([0-9a-f]{6})$/i.exec(normHex(v)||'');if(!m)return '#8ab4ff';var n=parseInt(m[1],16),r=(n>>16)&255,g=(n>>8)&255,b=n&255;var lum=(0.2126*r+0.7152*g+0.0722*b)/255;if(lum>=0.5)return '#'+m[1].toLowerCase();var t=0.55;r=Math.round(r+(255-r)*t);g=Math.round(g+(255-g)*t);b=Math.round(b+(255-b)*t);var hx=function(x){return ('0'+x.toString(16)).slice(-2);};return '#'+hx(r)+hx(g)+hx(b);}
   function swatch(t,v){
     v=String(v||'').toLowerCase();var matched=false;
     document.querySelectorAll('.swatches[data-target="'+t+'"] .sw').forEach(function(s){
