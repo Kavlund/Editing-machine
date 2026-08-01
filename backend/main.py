@@ -1812,6 +1812,17 @@ def integrations_status():
             st["notify"] = _notify.status()
         except Exception:
             pass
+        # Motion-graphics engine: 'built' = the image was built WITH_REMOTION=1 (node_modules
+        # present, so templates can render); 'graphics_on' = REMOTION_GRAPHICS=1 runtime switch.
+        # Both must be true for takeovers / graphics to appear. Quick way to confirm per instance.
+        try:
+            _rdir = os.environ.get("REMOTION_DIR") or "/app/remotion"
+            st["remotion"] = {
+                "built": os.path.isdir(os.path.join(_rdir, "node_modules")),
+                "graphics_on": os.environ.get("REMOTION_GRAPHICS") == "1",
+            }
+        except Exception:
+            pass
         return st
     except Exception as e:
         return {"error": str(e)}
