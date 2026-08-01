@@ -139,6 +139,19 @@
       <span class="pill" id="p-drive"><span class="dot"></span> Google Drive</span>
       <span class="pill" id="p-notion"><span class="dot"></span> Notion</span>
       <span class="pill" id="p-notify"><span class="dot"></span> Notifications</span>
+      <span class="pill" id="p-remotion"><span class="dot"></span> Motion graphics</span>
+    </div>
+
+    <!-- Motion graphics engine status (read-only) -->
+    <div class="step">
+      <div class="step-head">
+        <div class="num" style="background:var(--card);color:var(--muted);border:1px solid var(--card-line);">◆</div>
+        <h2>Motion graphics engine</h2>
+        <span class="badge wait" id="b-remotion"><span class="d"></span><span class="t">Checking…</span></span>
+      </div>
+      <div class="body">
+        <p id="remotion-detail" style="margin:0;color:var(--muted);font-size:14px;">Checking whether takeovers and on-screen graphics will render on this instance…</p>
+      </div>
     </div>
 
     <!-- 1 Google Drive -->
@@ -339,6 +352,19 @@
     setBadge("b-drive",drive);  setPill("p-drive",drive);
     setBadge("b-notion",notion);setPill("p-notion",notion);
     setBadge("b-notify",notify);setPill("p-notify",notify);
+    // Motion graphics engine: needs BOTH the build (node_modules present) and the runtime switch.
+    var rem = s.remotion || {}, remOn = !!(rem.built && rem.graphics_on);
+    setPill("p-remotion", remOn);
+    var rb = document.getElementById("b-remotion");
+    if(rb){ rb.classList.toggle("on", remOn); rb.classList.toggle("wait", !remOn);
+            rb.querySelector(".t").textContent = remOn ? "On" : (rem.built ? "Switch off" : "Not built"); }
+    var rd = document.getElementById("remotion-detail");
+    if(rd){
+      if(remOn) rd.innerHTML = "✅ On. Full-screen takeovers and on-screen graphics will render on this instance.";
+      else if(rem.built) rd.innerHTML = "The engine is installed, but the runtime switch is off. Set <b>REMOTION_GRAPHICS=1</b> in Railway → Variables.";
+      else if(rem.built === false) rd.innerHTML = "Not in this build. Set <b>WITH_REMOTION=1</b> in Railway → Variables and redeploy — it installs the engine at build time — then it turns on (it can take a few minutes to rebuild).";
+      else rd.textContent = "Checking…";
+    }
     document.getElementById("foot").innerHTML = drive
       ? "✅ Google Drive connected. Finished videos will be delivered automatically."
       : "Live status. Updates automatically as you connect each service.";
