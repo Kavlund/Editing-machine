@@ -289,7 +289,7 @@ _GRAPHIC_TEMPLATES = ("ListCard", "Stat", "LowerThird", "QuoteCard", "Comparison
                       "Steps", "Checklist", "ProgressBar", "KeyTakeaway", "Definition",
                       "Warning", "PriceCard", "Testimonial", "Countdown", "Divider",
                       "QuestionCard", "SharePrompt", "SwipeUp", "CommentPrompt", "SaveThis",
-                      "Lottie")
+                      "Takeover", "Lottie")
 
 
 def _lottie_catalog() -> list:
@@ -356,14 +356,29 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
             "    LOTTIE LIBRARY (only these files exist):\n" + _lot_lines + "\n"
         )
     graphics_rules = (
-        "\n- graphics: on-screen motion-graphic cards, each anchored to a spoken moment by an EXACT short "
-        "quote from the transcript. Add 1 to 2 on a normal video (up to 3 on a rich one) wherever a moment "
-        "genuinely lands harder with a card — a list, a number, a key line, a name, a comparison, a "
-        "definition, or a call to action. Prefer a well-placed card over none; only return [] when the clip "
-        "is genuinely too short or too bare for any. Never put one on every line and never stack two back to "
-        "back. Pick the template that fits the moment:\n"
-        "  * ListCard — when the speaker enumerates a short list of points/steps/tips. "
-        'props: {"title": "optional short header or omit", "items": ["2-5 SHORT lines, 2-5 words each"]}.\n'
+        "\n- graphics: on-screen motion-graphics, each anchored to a spoken moment by an EXACT short "
+        "quote from the transcript. Add graphics GENEROUSLY — 3 to 6 across a normal video wherever a "
+        "moment could land harder: a list, a number, a key line, a name, a comparison, a definition, a "
+        "call to action. ERR TOWARD INCLUDING a graphic: the editor removes any extra in one click, so a "
+        "useful-but-imperfect graphic is better than a bare stretch. Just never put one on every single "
+        "line and never stack two back to back.\n"
+        "There are TWO kinds, and this is the most important choice. A TAKEOVER fills the WHOLE screen "
+        "(the video cuts to an animated brand-coloured background and the content sits on it, nothing over "
+        "the speaker). An OVERLAY card sits on top of the live video. Overlay cards look BAD when they land "
+        "on the speaker's face or on the captions, so:\n"
+        "  - Whenever the speaker NAMES SEVERAL THINGS in a row (e.g. 'magnesium, aromatherapy, hormones, a "
+        "night routine'), or delivers a list / set of steps / a key statement, use a TAKEOVER — never a "
+        "small card. Put EACH thing she names as its own item, and set duration_sec to roughly how long she "
+        "keeps talking about them (up to 8 seconds) so the list BUILDS ON SCREEN as she speaks each one.\n"
+        "  - Reserve overlay cards for a quick single beat (one number, one short callout) that genuinely "
+        "reads fine tucked in a corner or the very top. When in real doubt, choose the Takeover.\n"
+        "Pick the template that fits the moment:\n"
+        "  * Takeover — the DEFAULT for any list, steps, comparison, key statement, or anything the speaker "
+        "talks through for more than a moment. Full-screen animated brand background, the content builds on "
+        "it as she speaks. "
+        'props: {"kicker": "optional 1-3 word label like FOR BETTER SLEEP, or omit", "title": "the headline, a few words", "items": ["each thing she names, 2-5 SHORT words each — omit only for a single-statement takeover"]}.\n'
+        "  * ListCard — a small overlay list over the live video (use Takeover instead when the speaker "
+        "fills the frame). props: {\"title\": \"optional short header or omit\", \"items\": [\"2-5 SHORT lines, 2-5 words each\"]}.\n"
         "  * Stat — when the speaker states a striking number/metric worth spotlighting. "
         'props: {"value": "90%" or "10x" or "$1.4B", "label": "short caption of what it means"}.\n'
         "  * LowerThird — to name a person or brand the first time they are introduced. "
@@ -373,7 +388,7 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         "  * Comparison — when the speaker contrasts two sides (before vs after, myth vs truth). "
         'props: {"leftLabel": "MYTH or BEFORE", "leftText": "short", "rightLabel": "TRUTH or AFTER", "rightText": "short"}.\n'
         "  * SubscribePrompt — if the speaker asks viewers to follow/subscribe; at most once, on that ask. "
-        'props: {"text": "SUBSCRIBE" or "FOLLOW", "handle": "@handle or omit"}.\n'
+        'props: {"text": "SUBSCRIBE" or "FOLLOW", "handle": "OMIT unless the speaker actually states their real handle — NEVER invent a placeholder like @yourhandle"}.\n'
         "  * Callout — to punch one short, quotable spoken phrase (3-6 words) onto the screen. "
         'props: {"text": "the exact short phrase, in the transcript language"}.\n'
         "  * Counter — when a specific number lands harder counting up (followers, revenue, %, days). "
@@ -403,7 +418,7 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
         "  * QuestionCard — to put a direct question to the viewer on screen. "
         'props: {"question": "the question"}.\n'
         "  * SharePrompt — for a like/comment/share nudge (a specific subscribe ask uses SubscribePrompt). At most once. "
-        'props: {"text": "optional", "handle": "@handle or omit"}.\n'
+        'props: {"text": "optional", "handle": "OMIT unless the speaker states their real handle — NEVER invent one"}.\n'
         "  * SwipeUp — when pointing to a link in bio or swipe up. At most once. "
         'props: {"text": "optional, defaults LINK IN BIO"}.\n'
         "  * CommentPrompt — when the speaker asks viewers to comment a specific word. "
@@ -522,6 +537,14 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                     props = g.get("props") if isinstance(g.get("props"), dict) else {}
                     if t == "Lottie" and not any(str(props.get("file", "")).strip() == c["file"] for c in _lot):
                         continue   # Lottie must name a real library file — never invent one
+                    if t in ("SubscribePrompt", "SharePrompt"):
+                        # Never burn a made-up placeholder handle like "@yourhandle" into
+                        # the video — the model invents one when it doesn't know the real
+                        # handle. Keep it only when it looks like a genuine handle.
+                        _hl = str(props.get("handle", "")).strip().lower().lstrip("@")
+                        if (not _hl) or ("your" in _hl) or _hl in (
+                                "handle", "username", "name", "channel", "account", "profile"):
+                            props.pop("handle", None)
                     try:
                         dur = max(1.5, min(8.0, float(g.get("duration_sec", 3.0) or 3.0)))
                         at  = float(g.get("at_sec", 0) or 0)
@@ -529,7 +552,7 @@ def _generate_edit_plan(source_map: dict, instructions: str, client: dict,
                         dur, at = 3.0, 0.0
                     gs.append({"template": t, "quote": str(g.get("quote", "")).strip(),
                                "at_sec": at, "duration_sec": dur, "props": props})
-                plan["graphics"] = gs[:3]   # hard cap: never carpet the video with cards
+                plan["graphics"] = gs[:6]   # generous cap — the editor prunes extras in one click
         log_fn(f"AI plan: hook={'yes' if plan['hook'] else 'no'}, "
                f"{len(plan['keywords'])} keyword(s), zoom={plan['zoom']['enabled']}, "
                f"{len(plan['zoom_events'])} timed zoom(s), {len(plan['graphics'])} graphic(s)")
@@ -1508,6 +1531,7 @@ def _auto_edl(project_dir: Path, source_map: dict, client: dict,
         "zoom_strength": zoom_strength,
         "brand":         brand,
         "graphics_color": graphics_color,   # client's brand colour for motion graphics
+        "graphics_bg":    editing.get("graphics_bg", ""),   # optional full-screen Takeover surface (else derived from the brand)
     }
 
     # Transitions: if the reference fades in/out (rather than hard-cutting), carry a
@@ -1903,6 +1927,8 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                 edl["grade"] = overrides["grade"]
             if overrides.get("graphics_color"):        # editor set a per-video graphics colour
                 edl["graphics_color"] = overrides["graphics_color"]
+            if "graphics_bg" in overrides:             # editor set / cleared the Takeover surface
+                edl["graphics_bg"] = overrides["graphics_bg"]
             caps = edl.setdefault("style", {}).setdefault("captions", {})
             for ok, ek in [("caption_y","y"),("caption_font_size","font_size"),
                            ("caption_color","color"),("highlight_color","highlight_color"),

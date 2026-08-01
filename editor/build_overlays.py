@@ -597,11 +597,21 @@ def build_graphics(edit, edl):
         # video); only guard the hard bounds so a near-end card's outro isn't cut.
         dur   = max(1.0, min(8.0, float(g.get("duration_sec", 3.0))))
         props = dict(g.get("props") or {})
+        # A full-screen Takeover's net is the client's PRIMARY brand colour (accent ->
+        # primary fallback), not the accent used for small overlay cards.
+        _default_ac = (brand.get("primary_color") or accent) if tmpl == "Takeover" else accent
         props.update({
             "durationInFrames": max(30, int(round(dur * FPS))),
             "width":  W, "height": H,
-            "accent": props.get("accent") or accent,
+            "accent": props.get("accent") or _default_ac,
         })
+        # Takeover surface: an explicit client / per-video background (so a dark-brand
+        # client can still get a light, warm takeover) — else the template derives it
+        # from the brand. Only set when there is a value; absent means auto-derive.
+        if tmpl == "Takeover":
+            _bg = props.get("bg") or edl.get("graphics_bg")
+            if _bg:
+                props["bg"] = _bg
         # Retry once: a single Remotion/Chromium render can fail transiently
         # (memory pressure, a flaky headless launch), which is why a graphic
         # sometimes vanished from an otherwise-fine render.

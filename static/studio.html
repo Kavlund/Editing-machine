@@ -69,6 +69,8 @@
   .brollfull .bt,.brollcard .bt{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#60a5fa;font-weight:800}
   .brollcard{position:absolute;top:9%;left:50%;transform:translateX(-50%);max-width:76%;background:rgba(6,12,22,.9);border:1.5px solid #60a5fa;border-radius:11px;padding:10px 13px;color:#dbe9ff;font-size:11px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,.5)}
   .brollcard .bt{margin-bottom:3px}
+  .modebadge{font-size:11px;font-weight:600;color:#34d399;background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);border-radius:7px;padding:3px 9px;white-space:nowrap}
+  .modebadge.edit{color:#fbbf24;background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.32)}
   .transport{width:100%;max-width:300px;display:flex;flex-direction:column;gap:9px}
   .tbtns{display:flex;align-items:center;gap:8px}
   .icon-btn{width:34px;height:34px;border-radius:9px;border:1px solid var(--border-2);background:var(--raised);color:var(--text);display:grid;place-items:center;cursor:pointer;transition:.15s;flex:none}
@@ -195,10 +197,11 @@
             <div class="tbtns">
               <button class="play icon-btn" id="play" title="Play"><svg id="pico" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
               <div class="tc"><b id="cur">00:00</b> / <span id="tot">00:00</span></div>
+              <span id="modeBadge" class="modebadge">Final render · matches your download</span>
             </div>
             <div class="frame-tools">
               <button class="chip" id="safeToggle">◳ Safe zones</button>
-              <button class="chip" id="capOff" title="Clean preview: hide the burned-in render and show live editable captions, title and graphics">Clean preview</button>
+              <button class="chip" id="capOff" title="Live edit: switch off the finished render to preview unsaved caption / title / graphic changes. Re-render to bake them in.">Live edit</button>
             </div>
           </div>
         </div>
@@ -250,6 +253,11 @@
             <div class="swatches brand" data-target="gfxcolor"></div>
             <div class="swatches" data-target="gfxcolor"><span class="sw" data-c="#ffffff" style="background:#fff"></span><span class="sw" data-c="#fbbf24" style="background:#fbbf24"></span><span class="sw" data-c="#f59e0b" style="background:#f59e0b"></span><span class="sw" data-c="#ef4444" style="background:#ef4444"></span><span class="sw" data-c="#f472b6" style="background:#f472b6"></span><span class="sw" data-c="#a855f7" style="background:#a855f7"></span><span class="sw" data-c="#6366f1" style="background:#6366f1"></span><span class="sw" data-c="#3b82f6" style="background:#3b82f6"></span><span class="sw" data-c="#46c8ff" style="background:#46c8ff"></span><span class="sw" data-c="#34d399" style="background:#34d399"></span></div>
             <div class="colorctl"><span class="sw custom" data-target="gfxcolor" title="Current colour"></span><input type="color" class="pick" id="gfxPick" value="#fbbf24" title="Pick a colour"><input type="text" class="hexin" id="gfxHex" maxlength="7" placeholder="#RRGGBB" spellcheck="false"></div>
+            <div style="height:1px;background:var(--border);margin:13px 0"></div>
+            <span class="lab">Full-screen takeover background</span>
+            <p class="muted-note" style="margin:2px 0 6px">The full-screen "net" takeover uses this surface. Leave on Match brand and it is built from the client's colours (a light, warm brand comes out light; a bold, dark brand comes out dark). Or force a light or dark surface.</p>
+            <div class="swatches" data-target="gfxbg"><span class="sw" data-c="" style="background:linear-gradient(135deg,#4b5563,#9ca3af)" title="Match brand (auto)"></span><span class="sw" data-c="#f4efe6" style="background:#f4efe6"></span><span class="sw" data-c="#ece3d3" style="background:#ece3d3"></span><span class="sw" data-c="#eef0f2" style="background:#eef0f2"></span><span class="sw" data-c="#0a0b10" style="background:#0a0b10"></span><span class="sw" data-c="#12131a" style="background:#12131a"></span></div>
+            <div class="colorctl"><span class="sw custom" data-target="gfxbg" title="Current surface"></span><input type="color" class="pick" id="gfxBgPick" value="#f4efe6" title="Pick a surface"><input type="text" class="hexin" id="gfxBgHex" maxlength="7" placeholder="#RRGGBB / blank" spellcheck="false"></div>
           </div>
 
           <div class="grp" id="capTextPanel" style="display:none">
@@ -330,7 +338,7 @@
   function norm(t){return (t||'').replace(/\s+/g,' ').trim().toLowerCase();}
   // ---- undo: arm a snapshot at each interaction start, commit it only when a change lands ----
   var HIST=[], HMAX=100, PRISTINE=null, _pending=null;
-  function cloneEdit(s){return JSON.parse(JSON.stringify({dur:s.dur,height:s.height,ranges:s.ranges,cuts:s.cuts,splits:s.splits,caption:s.caption,captions:s.captions,capEdits:s.capEdits,capColors:s.capColors,capRemoves:s.capRemoves,gfxColor:s.gfxColor,title:s.title,graphics:s.graphics,broll:s.broll,zooms:s.zooms}));}
+  function cloneEdit(s){return JSON.parse(JSON.stringify({dur:s.dur,height:s.height,ranges:s.ranges,cuts:s.cuts,splits:s.splits,caption:s.caption,captions:s.captions,capEdits:s.capEdits,capColors:s.capColors,capRemoves:s.capRemoves,gfxColor:s.gfxColor,gfxBg:s.gfxBg,title:s.title,graphics:s.graphics,broll:s.broll,zooms:s.zooms}));}
   function refreshUndo(){var u=$('undo');if(u)u.disabled=HIST.length===0;}
   function armSnapshot(){_pending=cloneEdit(S);}          // before any handler mutates S
   function commitSnapshot(){if(_pending){HIST.push(_pending);if(HIST.length>HMAX)HIST.shift();_pending=null;refreshUndo();}}
@@ -369,6 +377,7 @@
     (d.caption_color_overrides||[]).forEach(function(o){S.capColors[norm(o.from)]=o.color;});
     S.brandColors=(d.brand_colors||[]);
     S.gfxColor=(d.graphics_color||'');
+    S.gfxBg=(d.graphics_bg||'');
     // apply existing text edits to the shown chunks
     S.captions.forEach(function(c){if(S.capEdits[norm(c.orig)]!=null)c.text=S.capEdits[norm(c.orig)];});
     S.graphics=(d.graphics_override||d.edl.graphics||[]).map(function(g){return Object.assign({},g);});
@@ -404,7 +413,7 @@
     v.addEventListener('error',function(){vload.classList.remove('on');$('novid').style.display='flex';$('drivelink').href=S.driveLink||S.videoUrl;});
 
     $('loading').style.display='none';$('editor').style.display='flex';
-    buildBrandSwatches();reflectCaption();reflectTitle();reflectGfx();renderRuler();renderTimeline();wire();showLook();updateLiveCaption(0);
+    buildBrandSwatches();reflectCaption();reflectTitle();reflectGfx();renderRuler();renderTimeline();wire();showLook();setMode();updateLiveCaption(0);
     PRISTINE=JSON.stringify(cloneEdit(S));
     document.addEventListener('pointerdown',armSnapshot,true);   // capture: fires before handlers
     document.addEventListener('keydown',function(e){if(e.metaKey||e.ctrlKey)return;if(!_pending)armSnapshot();},true);
@@ -449,6 +458,12 @@
   }
   function updateLiveCaption(t){
     var el=$('capguidetext'),g=$('capguide'),ch=null;
+    // FINAL RENDER mode (not clean preview): the video IS the finished export, with
+    // highlighted captions and graphics already burned in. Hide the plain HTML caption
+    // overlay so it does not cover the real highlighted caption — the preview is then
+    // one-to-one with the download. The other guides already self-hide off clean preview.
+    if(!S.capOff){g.style.display='none';paintBrollGuide(t);paintTitleGuide(t);paintGfxGuide(t);return;}
+    g.style.display='';
     for(var i=0;i<S.captions.length;i++){if(S.captions[i].start<=t&&t<S.captions[i].end){ch=S.captions[i];break;}}
     if(ch){el.textContent=ch.text;g.style.opacity='1';el.style.color=S.capColors[norm(ch.orig)]||S.caption.color||'#ffffff';}
     else if(S.captions.length){
@@ -491,6 +506,7 @@
     if(['SubscribePrompt','SharePrompt','SwipeUp','SaveThis','CommentPrompt'].indexOf(tpl)>=0)pos='lower';
     if(tpl==='LowerThird')pos='bottom';
     switch(tpl){
+      case 'Takeover':return {takeover:true,kicker:p.kicker||'',title:p.title||'',lines:(p.items||[]).filter(Boolean)};
       case 'ListCard':title=p.title||'';lines=p.items||[];break;
       case 'Steps':title=p.title||'';lines=(p.steps||[]).map(function(s,i){return (i+1)+'. '+s;});break;
       case 'Checklist':title=p.title||'';lines=(p.items||[]).map(function(s){return '✓ '+s;});break;
@@ -554,6 +570,22 @@
     var ox=(+g.x||0)*stageW,oy=(+g.y||0)*stageH,off='translate('+ox+'px,'+oy+'px)';
     var D='pointer-events:auto;cursor:grab" data-draggable="1"';   // closes style, opens the drag attr
     var info=gfxInfo(g),html='';
+    if(info.takeover){
+      // Full-screen takeover: the video cuts to an animated brand-colour net and the
+      // content fills the screen. Theme (surface/net/text) is derived from the client's
+      // colours — light brands come out light — exactly like the render, so this preview
+      // is honest. Not draggable: it fills the frame.
+      var prim=(g.props&&g.props.accent)||S.brandColors[0]||S.gfxColor||'#5b7c3a';
+      var th=takeoverTheme(prim,S.gfxBg),tnet=th.net,tink=th.ink,tsh=th.isLight?'0 2px 8px rgba(0,0,0,.12)':'0 6px 22px rgba(0,0,0,.6)';
+      var tin='';
+      if(info.kicker)tin+='<div style="font-weight:800;font-size:'+Math.max(9,stageH*0.022)+'px;letter-spacing:.16em;text-transform:uppercase;color:'+tnet+';margin-bottom:'+(stageH*0.022)+'px">'+esc(info.kicker)+'</div>';
+      if(info.title)tin+='<div style="font-weight:900;font-size:'+Math.max(15,stageH*(info.lines.length?0.05:0.07))+'px;line-height:1.05;text-transform:uppercase;color:'+tink+';margin-bottom:'+(info.lines.length?stageH*0.03:0)+'px;text-shadow:'+tsh+'">'+esc(info.title)+'</div>';
+      info.lines.forEach(function(ln){if(ln)tin+='<div style="display:flex;align-items:center;gap:'+(stageH*0.022)+'px;margin-bottom:'+(stageH*0.024)+'px"><span style="width:'+(stageH*0.018)+'px;height:'+(stageH*0.018)+'px;border-radius:4px;background:'+tnet+';'+(th.isLight?'':'box-shadow:0 0 12px '+tnet+';')+'flex:none"></span><span style="font-weight:800;font-size:'+Math.max(11,stageH*0.038)+'px;text-transform:uppercase;color:'+tink+';line-height:1.15;text-shadow:'+tsh+'">'+esc(ln)+'</span></div>';});
+      wrap.innerHTML='<div class="gfxtag" style="color:'+tnet+'">Full-screen takeover · '+esc(g.template)+'</div>'
+        +'<div style="position:absolute;inset:0;background:radial-gradient(120% 90% at 50% 38%, '+tnet+'1f, '+th.base+' 62%), '+th.base+'"><div style="position:absolute;top:50%;left:9%;right:9%;transform:translateY(-50%);text-align:left">'+tin+'</div></div>';
+      wrap.style.display='block';
+      return;
+    }
     if(info.emphasis){
       var d=Math.max(46,stageH*0.2);
       html='<div style="position:absolute;left:'+(info.cx*100)+'%;top:'+(info.cy*100)+'%;transform:translate(-50%,-50%) '+off+';width:'+d+'px;height:'+(d*0.62)+'px;border:3px solid '+ac+';border-radius:50%;box-shadow:0 0 10px rgba(0,0,0,.45);'+D+'></div>';
@@ -595,11 +627,19 @@
   // When you touch a caption control, swap the burned render for the clean proxy so
   // the live caption is the ONLY caption on screen (true WYSIWYG, no re-render).
   var _cleanNudged=false;
+  // Reflect which preview the user is looking at: FINAL RENDER (the real export, one-to-one
+  // with the download) vs LIVE EDIT (the clean proxy + editable overlays, an approximation
+  // of unsaved changes until re-render).
+  function setMode(){
+    var edit=!!S.capOff,badge=$('modeBadge'),btn=$('capOff');
+    if(badge){badge.textContent=edit?'Live edit · unsaved changes, re-render to apply':'Final render · matches your download';badge.classList.toggle('edit',edit);}
+    if(btn)btn.classList.toggle('on',edit);
+  }
   function ensureCleanPreview(){
     if(S.capOff||!S.proxyUrl)return;
-    S.capOff=true;var btn=$('capOff');if(btn)btn.classList.add('on');
-    var v=$('video'),t=v.currentTime;$('vload').classList.add('on');v.src=S.proxyUrl;try{v.currentTime=t||0;}catch(e){}
-    if(!_cleanNudged){_cleanNudged=true;toast('Clean preview on — caption edits show live here');}
+    S.capOff=true;var v=$('video'),t=v.currentTime;$('vload').classList.add('on');v.src=S.proxyUrl;try{v.currentTime=t||0;}catch(e){}
+    setMode();
+    if(!_cleanNudged){_cleanNudged=true;toast('Live edit — showing your unsaved changes; re-render to bake them into the video');}
   }
   function seg(id,a,v){var g=$(id);if(!g)return;[].forEach.call(g.children,function(b){b.classList.toggle('on',b.getAttribute(a)===v);});}
   function normHex(v){v=String(v||'').trim();var m=/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(v);if(!m)return null;var h=m[1].toLowerCase();if(h.length===3)h=h.replace(/./g,function(c){return c+c;});return '#'+h;}
@@ -612,7 +652,7 @@
     v=String(v||'').toLowerCase();var matched=false;
     document.querySelectorAll('.swatches[data-target="'+t+'"] .sw').forEach(function(s){
       var on=(s.getAttribute('data-c')||'').toLowerCase()===v;s.classList.toggle('on',on);if(on&&v)matched=true;});
-    var ids={text:['txtPick','txtHex'],hl:['hlPick','hlHex'],capcolor:['capPick','capHex'],gfxcolor:['gfxPick','gfxHex'],gfxone:['gfxOnePick','gfxOneHex']}[t]||[];
+    var ids={text:['txtPick','txtHex'],hl:['hlPick','hlHex'],capcolor:['capPick','capHex'],gfxcolor:['gfxPick','gfxHex'],gfxone:['gfxOnePick','gfxOneHex'],gfxbg:['gfxBgPick','gfxBgHex']}[t]||[];
     var pick=$(ids[0]),hex=$(ids[1]);
     if(pick&&/^#[0-9a-f]{6}$/.test(v))pick.value=v;
     if(hex&&document.activeElement!==hex)hex.value=(v&&v.charAt(0)==='#')?v:'';
@@ -635,7 +675,19 @@
     if(!onNow&&S.graphics.length){gotoGfx(0);} else {dirty();updateLiveCaption(t);return;}
     dirty();
   }
-  function reflectGfx(){swatch('gfxcolor',S.gfxColor||'');}
+  // Full-screen Takeover surface (blank = derive from the brand). Repaints so the
+  // takeover preview updates live.
+  function setGfxBg(c){ensureCleanPreview();S.gfxBg=c?(normHex(c)||''):'';swatch('gfxbg',S.gfxBg);var vid=$('video'),t=vid.currentTime||0,onNow=S.graphics.some(function(g){return g.template==='Takeover'&&t>=(g.start_sec||0)&&t<(g.start_sec||0)+(g.duration_sec||3);});var tk=S.graphics.map(function(g,i){return {g:g,i:i};}).filter(function(x){return x.g.template==='Takeover';});if(!onNow&&tk.length){gotoGfx(tk[0].i);}else{dirty();updateLiveCaption(t);}}
+  function reflectGfx(){swatch('gfxcolor',S.gfxColor||'');swatch('gfxbg',S.gfxBg||'');}
+  // Mirror of remotion/src/util.ts takeoverTheme so the editor preview of a takeover
+  // matches the render: a light/warm brand -> light surface + dark text; a dark brand ->
+  // dark surface + white text; an explicit background overrides.
+  function _rgbT(h){h=normHex(h)||'#000000';var n=parseInt(h.slice(1),16);return [(n>>16)&255,(n>>8)&255,n&255];}
+  function _hxT(v){return ('0'+Math.max(0,Math.min(255,Math.round(v))).toString(16)).slice(-2);}
+  function jlum(h){var c=_rgbT(h);return (0.2126*c[0]+0.7152*c[1]+0.0722*c[2])/255;}
+  function jshade(h,a){var c=_rgbT(h),to=a>=0?255:0,k=Math.min(1,Math.abs(a));return '#'+_hxT(c[0]+(to-c[0])*k)+_hxT(c[1]+(to-c[1])*k)+_hxT(c[2]+(to-c[2])*k);}
+  function jmix(a,b,t){var x=_rgbT(a),y=_rgbT(b);t=Math.max(0,Math.min(1,t));return '#'+_hxT(x[0]+(y[0]-x[0])*t)+_hxT(x[1]+(y[1]-x[1])*t)+_hxT(x[2]+(y[2]-x[2])*t);}
+  function takeoverTheme(primary,bg){var p=normHex(primary)||'#5b7c3a';var base=normHex(bg)||(jlum(p)>=0.5?jmix(p,'#f4efe6',0.8):jmix(p,'#0a0b10',0.86));var isLight=jlum(base)>=0.5;return {base:base,net:isLight?jshade(p,-0.32):readable(p),ink:isLight?jshade(p,-0.82):'#ffffff',isLight:isLight};}
   // ---- Inspector sections: tabs for the default look, a context bar when something is selected ----
   var lookTab='cap', CTXP=['capTextPanel','clipPanel','gfxEditPanel','brollEditPanel'];
   function activateTab(tab){
@@ -660,6 +712,7 @@
   // ---- Motion-graphic content editing (select a graphic -> edit its text/colour/length) ----
   var selGfx=-1;
   var GFX_FIELDS={
+    Takeover:[['kicker','Kicker (optional)','t'],['title','Title','t'],['items','List lines (one per line, optional)','L']],
     ListCard:[['title','Title (optional)','t'],['items','Items (one per line)','L']],
     Steps:[['title','Title (optional)','t'],['steps','Steps (one per line)','L']],
     Checklist:[['title','Title (optional)','t'],['items','Items (one per line)','L']],
@@ -687,6 +740,7 @@
     Lottie:[['file','Lottie file','t']]
   };
   var GFX_LIST=[
+    {id:'Takeover',label:'Full-screen takeover',def:{kicker:'REMEMBER THIS',title:'3 ways to breathe better',items:['Slow the exhale','Belly, not chest','Four counts in']}},
     {id:'Callout',label:'Callout text',def:{text:'This changes everything'}},
     {id:'Stat',label:'Stat / number',def:{value:'90%',label:'of viewers drop off'}},
     {id:'Counter',label:'Counting number',def:{value:'10,000',label:'downloads'}},
@@ -757,6 +811,13 @@
   function gfxThumb(it){
     var ac=S.gfxColor||S.brandColors[0]||'#fbbf24',ink='#0a0b10';
     var info=gfxInfo({template:it.id,props:it.def||{}}),body='';
+    if(info.takeover){
+      var th=takeoverTheme(S.brandColors[0]||S.gfxColor,S.gfxBg),ti='';
+      if(info.kicker)ti+='<div style="color:'+th.net+';font-weight:800;font-size:7px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:2px">'+esc(info.kicker)+'</div>';
+      if(info.title)ti+='<div style="color:'+th.ink+';font-weight:900;font-size:9px;line-height:1.05;text-transform:uppercase;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(info.title)+'</div>';
+      (info.lines||[]).slice(0,2).forEach(function(ln){if(ln)ti+='<div style="color:'+th.net+';font-weight:700;font-size:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">• '+esc(ln)+'</div>';});
+      return '<div style="height:66px;border-radius:8px;overflow:hidden;background:radial-gradient(120% 90% at 50% 40%, '+th.net+'1f, '+th.base+' 62%);display:flex;align-items:center;padding:0 9px"><div style="text-align:left;max-width:100%">'+ti+'</div></div>';
+    }
     if(info.emphasis){
       body='<div style="width:38px;height:24px;border:2.5px solid '+ac+';border-radius:50%"></div>';
     } else if(info.pos==='lower'){
@@ -946,7 +1007,7 @@
     });
     $('play').addEventListener('click',function(){var v=$('video');if(v.paused){v.play();$('pico').innerHTML='<path d="M7 5h4v14H7zM13 5h4v14h-4z"/>';}else{v.pause();$('pico').innerHTML='<path d="M8 5v14l11-7z"/>';}});
     $('safeToggle').addEventListener('click',function(){this.classList.toggle('on');$('stage').classList.toggle('show-safe');});
-    $('capOff').addEventListener('click',function(){S.capOff=!S.capOff;this.classList.toggle('on',S.capOff);var v=$('video'),t=v.currentTime;$('vload').classList.add('on');v.src=S.capOff?S.proxyUrl:S.videoUrl;v.currentTime=t||0;updateLiveCaption(t||0);});
+    $('capOff').addEventListener('click',function(){S.capOff=!S.capOff;var v=$('video'),t=v.currentTime;$('vload').classList.add('on');v.src=S.capOff?S.proxyUrl:S.videoUrl;v.currentTime=t||0;setMode();updateLiveCaption(t||0);});
     // caption drag
     var g=$('capguide'),stage=$('stage'),drag=false;
     function setY(fr){fr=Math.max(.08,Math.min(.92,fr));g.style.top=(fr*100)+'%';S.caption.y=Math.round(fr*S.height);S.caption.position=null;seg('posSeg','data-p','');dirty();}
@@ -969,7 +1030,7 @@
     $('titleBgHex').addEventListener('input',function(){var v=normHex(this.value);if(v){S.title.bg_color=v;$('titleBgPick').value=v;titleTouched();}});
     function flip(){ensureCleanPreview();var on=$('caps').classList.toggle('on');$('caps').setAttribute('aria-checked',on);S.caption.uppercase=on;dirty();}
     $('caps').addEventListener('click',flip);$('caps').addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();flip();}});
-    document.querySelectorAll('.swatches').forEach(function(w){w.addEventListener('click',function(e){var s=e.target.closest('.sw');if(!s)return;var t=w.getAttribute('data-target');var c=s.getAttribute('data-c');if(t==='capcolor'){setCapColor(c);}else if(t==='gfxcolor'){setGfxColor(c);}else if(t==='gfxone'){setGfxOne(c);}else{setColor(t,c);}});});
+    document.querySelectorAll('.swatches').forEach(function(w){w.addEventListener('click',function(e){var s=e.target.closest('.sw');if(!s)return;var t=w.getAttribute('data-target');var c=s.getAttribute('data-c');if(t==='capcolor'){setCapColor(c);}else if(t==='gfxcolor'){setGfxColor(c);}else if(t==='gfxbg'){setGfxBg(c);}else if(t==='gfxone'){setGfxOne(c);}else{setColor(t,c);}});});
     // native colour pickers + hex inputs (converge on the same setters)
     if($('txtPick'))$('txtPick').addEventListener('input',function(){setColor('text',this.value.toLowerCase());});
     if($('hlPick'))$('hlPick').addEventListener('input',function(){setColor('hl',this.value.toLowerCase());});
@@ -979,6 +1040,8 @@
     if($('capHex'))$('capHex').addEventListener('input',function(){var v=normHex(this.value);if(v)setCapColor(v);});
     if($('gfxPick'))$('gfxPick').addEventListener('input',function(){setGfxColor(this.value.toLowerCase());});
     if($('gfxHex'))$('gfxHex').addEventListener('input',function(){var v=normHex(this.value);if(v)setGfxColor(v);});
+    if($('gfxBgPick'))$('gfxBgPick').addEventListener('input',function(){setGfxBg(this.value.toLowerCase());});
+    if($('gfxBgHex'))$('gfxBgHex').addEventListener('input',function(){var raw=String(this.value||'').trim();setGfxBg(raw?normHex(raw)||'':'');});
     // caption text apply/reset
     $('capApply').addEventListener('click',function(){if(editIdx<0)return;var c=S.captions[editIdx];var t=$('capText').value.trim();if(!t)return;c.text=t;if(norm(t)===norm(c.orig))delete S.capEdits[norm(c.orig)];else S.capEdits[norm(c.orig)]=t;renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);toast('Caption text updated');});
     $('capReset').addEventListener('click',function(){if(editIdx<0)return;var c=S.captions[editIdx];c.text=c.orig;delete S.capEdits[norm(c.orig)];$('capText').value=c.orig;renderTimeline();dirty();updateLiveCaption($('video').currentTime||0);});
@@ -1087,7 +1150,7 @@
     if(_t.color)title.color=_t.color;if(_t.bg_color)title.bg_color=_t.bg_color;if(_t.duration!=null)title.duration=_t.duration;
     if(_t.x)title.x=_t.x;if(_t.y)title.y=_t.y;
     var payload={caption:caption,title:title,cut_spans:S.cuts,split_points:S.splits,caption_text_overrides:capEdits,caption_color_overrides:capColors,
-      graphics_color:S.gfxColor||'',caption_removes:S.capRemoves||[],graphics_override:S.graphics,broll_override:S.broll,zooms:S.zooms,rerender:true};
+      graphics_color:S.gfxColor||'',graphics_bg:(S.gfxBg||''),caption_removes:S.capRemoves||[],graphics_override:S.graphics,broll_override:S.broll,zooms:S.zooms,rerender:true};
     $('save').disabled=true;$('save').innerHTML='Re-rendering…';
     fetch('/api/jobs/'+jobId+'/studio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
       .then(function(r){return r.json();}).then(function(){toast('Saved — re-rendering your video');setTimeout(function(){location.href='/#job-'+jobId;},1400);})

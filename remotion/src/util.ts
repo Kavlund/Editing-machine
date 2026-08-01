@@ -56,6 +56,51 @@ export function secondaryAccent(accent?: string, accent2?: string): string {
   return shade(a, -0.28);
 }
 
+// Relative luminance 0..1 of a hex colour (for light-vs-dark decisions).
+export function lum(hex: string): number {
+  const [r, g, b] = hexToRgb01(hex);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// Blend hex `a` toward hex `b` by t in [0,1]. shade() only mixes toward black/white;
+// this mixes toward an arbitrary target (a warm off-white, a near-black, etc.).
+export function mix(a: string, b: string, t: number): string {
+  const [ar, ag, ab] = hexToRgb01(a);
+  const [br, bg, bb] = hexToRgb01(b);
+  const k = Math.max(0, Math.min(1, t));
+  const hx = (v: number) => Math.round(v * 255).toString(16).padStart(2, "0");
+  const m = (x: number, y: number) => hx(x + (y - x) * k);
+  return `#${m(ar, br)}${m(ag, bg)}${m(ab, bb)}`;
+}
+
+// Build a full-screen TAKEOVER theme from the client's colours instead of a fixed dark
+// screen. A light/warm brand comes out light and warm (a soft brand-tinted surface, dark
+// on-brand text, a subtle tonal net); a bold/dark brand comes out dark (a deep brand-tinted
+// surface, white text, a lightened net). `bg` overrides the surface when the client picks
+// one; otherwise the surface is derived from the primary so every client differs.
+export function takeoverTheme(
+  primary?: string,
+  bg?: string
+): { base: string; net: string; ink: string; isLight: boolean } {
+  const p = /^#?[0-9a-fA-F]{6}$/.test((primary || "").trim())
+    ? (primary as string)
+    : "#5b7c3a";
+  const primaryLight = lum(p) >= 0.5;
+  const base =
+    bg && /^#?[0-9a-fA-F]{6}$/.test(bg.trim())
+      ? bg
+      : primaryLight
+      ? mix(p, "#f4efe6", 0.8) // light warm surface, tinted by the brand
+      : mix(p, "#0a0b10", 0.86); // deep surface, tinted by the brand (not pure black)
+  const isLight = lum(base) >= 0.5;
+  return {
+    base,
+    net: isLight ? shade(p, -0.32) : readableAccent(p), // darker on light, lighter on dark
+    ink: isLight ? shade(p, -0.82) : "#ffffff", // dark on-brand text on light, white on dark
+    isLight,
+  };
+}
+
 export function hexToRgb01(hex: string): [number, number, number] {
   const m = /^#?([0-9a-fA-F]{6})$/.exec((hex || "").trim());
   if (!m) return [1, 1, 1];

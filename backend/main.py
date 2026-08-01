@@ -1527,7 +1527,8 @@ def _promote_overrides_to_client(client: dict, ov: dict):
     sp = client.get("style_profile") or {}
     _POS = {"top": .17, "center": .5, "lower-third": .68, "bottom": .84}
     for k in ("caption_font_size", "caption_max_width", "caption_color", "highlight_color",
-              "caption_font", "caption_uppercase", "caption_weight", "grade"):
+              "caption_font", "caption_uppercase", "caption_weight", "grade",
+              "graphics_color", "graphics_bg"):
         if k in ov:
             editing[k] = ov[k]
     if "caption_position" in ov:
@@ -1630,6 +1631,9 @@ def get_studio(job_id: str):
         "brand_colors":  _brand_colors_for_job(job),   # default swatches from client onboarding
         "graphics_color": (job.get("job_overrides", {}).get("graphics_color")
                            or (_brand_colors_for_job(job) or [""])[0] or ""),  # current motion-graphics colour
+        "graphics_bg": (job.get("job_overrides", {}).get("graphics_bg")
+                        or ((job.get("client_snapshot", {}) or {}).get("editing", {}) or {}).get("graphics_bg")
+                        or ""),   # Takeover surface (empty = derived from the brand)
         "graphics_override":      job.get("graphics_override"),
         "broll_override":         job.get("broll_override"),
         "zooms":        job.get("zoom_add") if job.get("zoom_manual") else job.get("zoom_last", []),
@@ -1670,6 +1674,11 @@ async def save_studio(job_id: str, request: Request):
             ov["graphics_color"] = _gh
         else:
             ov.pop("graphics_color", None)
+    # Full-screen Takeover surface -> job_overrides. A hex forces a light or dark
+    # background regardless of the brand; blank clears back to the brand-derived default.
+    if "graphics_bg" in body:
+        _bh = _norm_hex(body.get("graphics_bg"))
+        ov["graphics_bg"] = _bh if _bh else ""
 
     # Title card -> job_overrides (per-video edit / delete / restyle)
     tt = body.get("title")

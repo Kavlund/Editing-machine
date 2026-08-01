@@ -2,6 +2,7 @@ import React from "react";
 import { Composition } from "remotion";
 import { Hook, HookProps } from "./Hook";
 import { ListCard, ListCardProps } from "./ListCard";
+import { Takeover, TakeoverProps } from "./Takeover";
 import { Stat, StatProps } from "./Stat";
 import { LowerThird, LowerThirdProps } from "./LowerThird";
 import { QuoteCard, QuoteCardProps } from "./QuoteCard";
@@ -62,6 +63,16 @@ export const RemotionRoot: React.FC = () => {
         width={1080}
         height={1920}
         defaultProps={{ title: "3 Ways To Win", items: ["Show Up Daily", "Serve First", "Stay Consistent"], durationInFrames: 150, width: 1080, height: 1920, accent: "#FFD24A" } as ListCardProps}
+        calculateMetadata={calcMeta}
+      />
+      <Composition
+        id="Takeover"
+        component={Takeover}
+        durationInFrames={150}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={{ kicker: "REMEMBER THIS", title: "3 Ways To Breathe Better", items: ["Slow The Exhale", "Belly, Not Chest", "Four Counts In"], durationInFrames: 150, width: 1080, height: 1920, accent: "#5b7c3a" } as TakeoverProps}
         calculateMetadata={calcMeta}
       />
       <Composition

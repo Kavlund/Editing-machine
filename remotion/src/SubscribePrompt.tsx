@@ -33,7 +33,7 @@ export const SubscribePrompt: React.FC<SubscribePromptProps> = ({ text, handle, 
   const label = (text || "SUBSCRIBE").toUpperCase();
 
   return (
-    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: H * 0.17 }}>
+    <AbsoluteFill style={{ justifyContent: "flex-start", alignItems: "center", paddingTop: H * 0.13 }}>
       <div
         style={{
           transform: `scale(${scale * pulse})`,
