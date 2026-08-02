@@ -238,6 +238,26 @@ def _full_transcript(source_map: dict) -> str:
     return " ".join(all_words).strip()
 
 
+def _normalize_script(s: str) -> str:
+    """Clean a pasted script down to the SPOKEN words for use as ground truth.
+
+    Creators paste a formatted doc: Markdown headings (### Hook / ### Body — section
+    labels, never spoken), bullet lists (each item IS spoken, the marker is not), curly
+    quotes, and stray invisible characters (word joiner, nbsp, BOM). This strips the
+    document scaffolding so the model aligns spoken words to real content, and keeps every
+    actual line. The raw script stays stored for display; only this cleaned copy feeds the
+    filler / cut passes."""
+    if not s:
+        return ""
+    s = s.replace("⁠", "").replace("﻿", "").replace(" ", " ")  # word joiner, BOM, nbsp
+    out = []
+    for ln in s.splitlines():
+        ln = re.sub(r"^\s{0,3}#{1,6}\s+", "", ln)          # '### Hook' -> 'Hook'
+        ln = re.sub(r"^\s*[••‣●\-\*]+\s*", "", ln)  # leading bullet / list marker
+        out.append(ln)
+    return "\n".join(out).strip()
+
+
 def _interpret_directives(spec: str, anthropic_key: str, log_fn) -> dict:
     """Turn the client's free-text 'Specific Instructions' (hard rules that must
     ALWAYS be obeyed) into concrete, highest-priority editing overrides."""
@@ -586,7 +606,7 @@ def _identify_filler_words(source_map: dict, speaker: str | None,
     import anthropic as ant
     sdk = ant.Anthropic(api_key=anthropic_key, timeout=120.0, max_retries=4)
     result: dict[str, set] = {}
-    script = (script or "").strip()
+    script = _normalize_script(script)
     has_script = bool(script)
     if has_script:
         log_fn("filler: using the provided script as ground truth for a clean, language-safe cut")
@@ -719,7 +739,7 @@ def _plan_cuts(source_map: dict, speaker: str | None,
     """
     if os.environ.get("AI_CUT_ENGINE", "1").strip() in ("0", "false", "off", "no"):
         return []
-    script = (script or "").strip()
+    script = _normalize_script(script)
     has_script = bool(script)
     all_spans: list = []
 
