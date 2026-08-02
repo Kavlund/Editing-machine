@@ -2315,9 +2315,13 @@ For B-ROLL changes: call list_broll FIRST. If its "available_clips" is empty (or
 the library is empty), STOP — do not call add_broll and do not invent filenames. Tell the user plainly
 that this client has no B-roll clips yet and that they add them by uploading clips in the B-roll panel or
 connecting the client's Drive B-roll folder. Only when clips ARE available do you use add_broll / remove_broll,
-picking exact filenames from available_clips. When the user asks for several ("add four b-rolls"), place one
-add_broll per distinct spoken moment, each with its own exact quote, up to the number they asked for or the
-number of clips available (whichever is smaller) — never fewer just because it is multi-step. B-roll is
+picking exact filenames from available_clips. CRITICAL: add_broll places a clip at a moment by an exact
+phrase from the transcript, so copy each quote VERBATIM (2-5 words) from list_broll's "transcript_lines" —
+never invent or paraphrase a quote, a phrase that is not in those lines is dropped and the clip never
+appears. If add_broll returns that a quote is not in the transcript, pick a different exact phrase from
+transcript_lines and try again. When the user asks for several ("add four b-rolls"), place one add_broll
+per distinct spoken moment spread across the video, each with its own verbatim quote, up to the number they
+asked for or the number of clips available (whichever is smaller) — never fewer just because it is multi-step. B-roll is
 auto-matched by the AI, and your edits fine-tune it — additions and removals persist across re-renders. Use
 reset_broll to go back to pure auto-matching. To place a clip, give a short exact quote from the transcript
 for the moment it should appear.
@@ -2651,6 +2655,49 @@ def _rerender_job(job: dict, job_id: str):
     _start_render(job_id)
 
 
+def _job_caption_lines(job_id: str) -> list:
+    """The SPOKEN caption lines for this video, so the chat can copy exact B-roll quotes
+    instead of guessing them. Reads the captions the last render persisted to the volume.
+    Uses each caption's original spoken text (not any later text edit), because a B-roll
+    quote is matched at render against the transcript's actual words."""
+    if not job_id:
+        return []
+    p = UPLOADS_DIR / job_id / "captions.json"
+    if not p.exists():
+        return []
+    try:
+        caps = json.loads(p.read_text())
+    except Exception:
+        return []
+    lines = []
+    for c in caps:
+        if not isinstance(c, dict):
+            continue
+        t = (c.get("orig") or c.get("text") or "").strip()
+        if t:
+            lines.append(t)
+    return lines
+
+
+def _quote_in_transcript(quote: str, lines: list) -> bool:
+    """Would this quote actually place at render? Mirrors pipeline._find_quote_time exactly
+    (normalize to lowercase alphanumerics, match the word sequence, then the loose
+    first-distinctive-word fallback) so a quote we accept here is one the render can locate."""
+    def _norm_words(s):
+        return [w for w in ("".join(c if c.isalnum() else " " for c in s.lower())).split() if w]
+    q = _norm_words(quote)
+    if not q:
+        return False
+    words = []
+    for ln in lines:
+        words.extend(_norm_words(ln))
+    n = len(q)
+    for i in range(len(words) - n + 1):
+        if words[i:i + n] == q:
+            return True
+    return len(q[0]) >= 4 and q[0] in words   # loose fallback, same as the render
+
+
 def _broll_choices(client_id: str, client_name: str) -> tuple:
     """B-roll available to this client's chat: locally-uploaded clips plus the clips
     in the client's Google Drive B-roll folder, each with a description when it has
@@ -2742,12 +2789,17 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
 
         if tool_name == "list_broll":
             _names, choices = _broll_choices(client_id, client_name)
+            _lines = _job_caption_lines(job_id)
             out = {
                 "current_broll_in_video": job.get("broll_last", []),
                 "your_manual_additions":  job.get("broll_add", []),
                 "your_removals":          job.get("broll_remove", []),
                 "your_trims":             job.get("broll_trims", []),
                 "available_clips": choices,
+                # The video's actual spoken lines. add_broll places a clip at a moment by an
+                # exact phrase from the transcript, so copy quotes VERBATIM from here — a quote
+                # that is not in these lines is silently dropped at render.
+                "transcript_lines": _lines,
             }
             if not choices:
                 out["note"] = (
@@ -2776,6 +2828,15 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             if fname not in _names:
                 return {"error": f"Clip '{fname}' is not in this client's B-roll library or Drive folder. "
                                  f"Available clips: {sorted(_names)}"}
+            # A quote that is not in the transcript is silently skipped at render, which is how
+            # "add b-roll" ends up placing nothing. Validate here against the real spoken lines
+            # (same match the render uses) and reject a bad quote so the model retries with a
+            # real phrase instead of storing a doomed entry.
+            _lines = _job_caption_lines(job_id)
+            if _lines and not _quote_in_transcript(quote, _lines):
+                return {"error": f"The quote '{quote}' is not in this video's transcript, so the clip "
+                                 f"would not be placed. Copy an exact short phrase (2-5 words) from these "
+                                 f"spoken lines and try add_broll again: {_lines}"}
             entry = {"file": fname, "quote": quote,
                      "duration_sec": max(1.5, min(3.5, float(tool_input.get("duration_sec", 2.5))))}
             _style = (tool_input.get("style") or "").strip().lower()
