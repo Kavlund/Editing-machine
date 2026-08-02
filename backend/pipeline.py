@@ -1791,6 +1791,7 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         # the transcript diarizes into two speakers. Keep the louder (closer mic); override
         # with job['keep_speaker'] = louder | quieter | both. Rewrites the scratch transcript
         # so EVERY downstream stage follows the kept voice. Never hard-fails.
+        reader_cuts = []      # SOURCE-time quiet reader/dead-air spans, applied with the cuts below
         if not mock_mode:
             try:
                 _spk_ids = set()
@@ -1805,40 +1806,60 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
                         editing["caption_speaker"] = None
                         _log(job_path, "speaker-select: keeping ALL voices (keep=both)")
                 else:
-                    from speaker_select import speaker_loudness, choose_kept_speaker, loud_word_keep
-                    # 1) PER-WORD LOUDNESS GATE first. The on-camera client is on the close
-                    #    mic (loud); the off-camera reader is far (much quieter, a stable
-                    #    15-20 dB gap). Gating per WORD by loudness survives the diarization
-                    #    drifting and MERGING the two voices partway through — the real
-                    #    failure (good for ~12s, then the reader's words get the on-camera
-                    #    label and slip in). Self-guards: a no-op unless the loudness is
-                    #    clearly bimodal, so a single or genuine two-person clip is untouched.
-                    _gated_any = False
+                    from speaker_select import speaker_loudness, choose_kept_speaker, reader_cut_spans
+                    # 1) LOUDNESS-BAND CUT (primary). The on-camera client is on the close
+                    #    mic and sits in a clear LOUD band; the off-camera reader + the dead
+                    #    air sit well below it (a stable 15-20 dB gap). Measure his band per
+                    #    clip and CUT every sustained stretch below it, at the AUDIO level —
+                    #    so the reader is removed even where the diarization merged the two
+                    #    voices onto one label, or the transcription garbled his overlapping
+                    #    quiet speech into gibberish. Cutting whole quiet SPANS (not scattered
+                    #    words) leaves no dead 'silent' gaps and needs no correct transcript,
+                    #    which is exactly where the earlier per-word gate fell down. No script
+                    #    is used, so his off-script lines survive. Self-guards to a no-op
+                    #    unless a real quiet second voice is present (single-voice clip →
+                    #    left for the ordinary pause trimmer).
+                    _cut_any = False
                     for _n, _s in source_map.items():
                         try:
-                            if not _s["trans"].exists():
+                            _spans = reader_cut_spans(_s["norm"])
+                            if not _spans:
                                 continue
-                            _tr = json.loads(_s["trans"].read_text())
-                            _words = _tr.get("words", [])
-                            _mask = loud_word_keep(_s["norm"], _words)
-                            if _mask is None:
-                                continue
-                            _dropped = sum(1 for w, m in zip(_words, _mask)
-                                           if (not m) and w.get("type") == "word")
-                            if not _dropped:
-                                continue
-                            _tr["words"] = [w for w, m in zip(_words, _mask) if m]
-                            _s["trans"].write_text(json.dumps(_tr))
-                            _gated_any = True
-                            _log(job_path, f"speaker-select [{_n}]: loudness gate removed "
-                                           f"{_dropped} quiet off-camera word(s), kept the close-mic voice")
+                            for (_a, _b) in _spans:
+                                reader_cuts.append({"source": _n, "start": _a, "end": _b})
+                            # Drop the reader/dead-air words from the transcript too, so the
+                            # captions and every downstream stage follow only his voice.
+                            _drop = 0
+                            if _s["trans"].exists():
+                                _tr = json.loads(_s["trans"].read_text())
+                                _kept = []
+                                for w in _tr.get("words", []):
+                                    st = w.get("start")
+                                    hit = False
+                                    if w.get("type") == "word" and st is not None:
+                                        try:
+                                            _stf = float(st)
+                                            hit = any(_a <= _stf < _b for (_a, _b) in _spans)
+                                        except (TypeError, ValueError):
+                                            hit = False
+                                    if hit:
+                                        _drop += 1
+                                    else:
+                                        _kept.append(w)
+                                _tr["words"] = _kept
+                                _s["trans"].write_text(json.dumps(_tr))
+                            _cut_any = True
+                            _secs = sum(_b - _a for (_a, _b) in _spans)
+                            _log(job_path, f"speaker-select [{_n}]: loudness band cut "
+                                           f"{len(_spans)} quiet reader/dead-air span(s) "
+                                           f"({_secs:.1f}s, {_drop} word(s)); kept the close-mic voice")
                         except Exception:
                             continue
-                    if _gated_any:
+                    if _cut_any:
                         editing["caption_speaker"] = None
                     elif len(_spk_ids) >= 2:
-                        # 2) Fall back to the diarization-label pick when loudness is not
-                        #    clearly bimodal but two labelled speakers exist.
+                        # 2) Fall back to the diarization-label pick when loudness shows no
+                        #    clear quiet second voice but two labelled speakers exist.
                         _loud = speaker_loudness(source_map, editing)
                         _kept_any = False
                         for _n, _s in source_map.items():
@@ -2061,11 +2082,11 @@ def run_pipeline(job_id: str, jobs_dir: Path, uploads_dir: Path, elevenlabs_key:
         # this — the AI cut engine's bad-take removals and the Studio "cut a bit out"
         # hand edits — and they use the identical mechanism. Source time is stable
         # across re-renders, so every cut survives regeneration.
-        cut_spans = list(ai_cut_spans) + (job.get("cut_spans") or [])
+        cut_spans = list(reader_cuts) + list(ai_cut_spans) + (job.get("cut_spans") or [])
         if cut_spans:
             before = len(edl["ranges"])
             edl["ranges"] = _apply_cut_spans(edl["ranges"], cut_spans)
-            _log(job_path, f"Cuts: {len(ai_cut_spans)} AI + {len(job.get('cut_spans') or [])} manual "
+            _log(job_path, f"Cuts: {len(reader_cuts)} reader + {len(ai_cut_spans)} AI + {len(job.get('cut_spans') or [])} manual "
                            f"({before} → {len(edl['ranges'])} ranges)")
 
         # Studio caption-TEXT edits (fix a typo, reword a line). build_overlays

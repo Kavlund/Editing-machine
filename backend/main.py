@@ -38,6 +38,11 @@ ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 # broken image link. Real instances set BRAND_NAME (and optionally BRAND_LOGO).
 BRAND_NAME = os.environ.get("BRAND_NAME", "Editing Machine")
 BRAND_LOGO = os.environ.get("BRAND_LOGO", "")
+# In-editor chat model. It drives ~17 edit tools and must reliably chain several calls
+# in one turn (e.g. "add four b-rolls" = four add_broll calls), which Haiku fumbles.
+# Sonnet 5 is the reliable default; override with CHAT_MODEL (e.g. claude-opus-5 for max
+# quality, or claude-haiku-4-5 to cut cost) without a code change.
+CHAT_MODEL = os.environ.get("CHAT_MODEL", "claude-sonnet-5")
 
 app = FastAPI(title="Talking Head Editor")
 
@@ -2300,10 +2305,22 @@ HOW THE CAPTIONS ACTUALLY WORK — read this before answering any caption questi
 NEVER tell the user to edit something manually in other editing software, and never claim a limit of
 "the automatic API". This product IS the editor. If something truly cannot be done, say exactly what
 cannot be done in one sentence and offer the closest thing that can.
-For B-ROLL changes: call list_broll first to see what's currently in the video and what clips are
-available, then use add_broll / remove_broll. B-roll is auto-matched by the AI, and your edits
-fine-tune it — additions and removals persist across re-renders. Use reset_broll to go back to pure
-auto-matching. To place a clip, give a short exact quote from the transcript for the moment it should appear.
+B-ROLL vs MOTION GRAPHICS — do not confuse them. B-ROLL is real footage or photos from THIS client's
+library, cut in over the speaker; you add/remove/trim it with the broll tools below. MOTION GRAPHICS are
+the animated text and list overlays; they are generated AUTOMATICALLY during the render and are tuned or
+removed in the editor's graphics controls, NOT through this chat. If the user asks to "add motion graphics"
+here, tell them graphics are added automatically and adjusted in the editor, and that this chat handles
+B-roll (real clips), captions, zooms, grade, format and the script.
+For B-ROLL changes: call list_broll FIRST. If its "available_clips" is empty (or it returns a "note" that
+the library is empty), STOP — do not call add_broll and do not invent filenames. Tell the user plainly
+that this client has no B-roll clips yet and that they add them by uploading clips in the B-roll panel or
+connecting the client's Drive B-roll folder. Only when clips ARE available do you use add_broll / remove_broll,
+picking exact filenames from available_clips. When the user asks for several ("add four b-rolls"), place one
+add_broll per distinct spoken moment, each with its own exact quote, up to the number they asked for or the
+number of clips available (whichever is smaller) — never fewer just because it is multi-step. B-roll is
+auto-matched by the AI, and your edits fine-tune it — additions and removals persist across re-renders. Use
+reset_broll to go back to pure auto-matching. To place a clip, give a short exact quote from the transcript
+for the moment it should appear.
 To change WHICH part of a VIDEO clip is used ("use clip X from 10s to 15s", "start that clip at 0:08"),
 call set_broll_span with the source in/out points in seconds (convert mm:ss to seconds like zoom). It sets
 the clip's source in/out, not where it appears; the clip must already be placed (add_broll first). Call
@@ -2725,13 +2742,25 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
 
         if tool_name == "list_broll":
             _names, choices = _broll_choices(client_id, client_name)
-            return {
+            out = {
                 "current_broll_in_video": job.get("broll_last", []),
                 "your_manual_additions":  job.get("broll_add", []),
                 "your_removals":          job.get("broll_remove", []),
                 "your_trims":             job.get("broll_trims", []),
                 "available_clips": choices,
             }
+            if not choices:
+                out["note"] = (
+                    "This client's B-roll library is EMPTY: no clips are uploaded and no Drive "
+                    "B-roll folder is connected, so there is nothing to place. Do NOT invent "
+                    "filenames or call add_broll. Tell the user plainly that this client has no "
+                    "B-roll footage yet, and that they add it by uploading clips in the B-roll "
+                    "panel for this client or by connecting the client's Google Drive B-roll "
+                    "folder. B-roll is REAL footage/photos from that library — it is a different "
+                    "thing from the motion graphics (animated text and list overlays), which are "
+                    "generated automatically during the render and tuned in the editor's graphics "
+                    "controls, not added through this chat.")
+            return out
 
         if tool_name == "add_broll":
             fname = Path(tool_input.get("file", "")).name
@@ -2739,8 +2768,14 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             if not fname or not quote:
                 return {"error": "Need both a clip 'file' and a 'quote' from the transcript"}
             _names, _ = _broll_choices(client_id, client_name)
+            if not _names:
+                return {"error": "This client's B-roll library is empty — no uploaded clips and no "
+                                 "connected Drive folder, so there is nothing to add. Tell the user to "
+                                 "upload B-roll clips for this client (or connect their Drive B-roll "
+                                 "folder) first. Do not retry with a guessed filename."}
             if fname not in _names:
-                return {"error": f"Clip '{fname}' is not in this client's B-roll library or Drive folder"}
+                return {"error": f"Clip '{fname}' is not in this client's B-roll library or Drive folder. "
+                                 f"Available clips: {sorted(_names)}"}
             entry = {"file": fname, "quote": quote,
                      "duration_sec": max(1.5, min(3.5, float(tool_input.get("duration_sec", 2.5))))}
             _style = (tool_input.get("style") or "").strip().lower()
@@ -3078,7 +3113,7 @@ def _run_chat_inner(messages: list, client_id: Optional[str], job_id: Optional[s
     for _ in range(8):
         try:
             resp = sdk.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=CHAT_MODEL,
                 max_tokens=1024,
                 system=system,
                 tools=tools,

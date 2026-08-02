@@ -124,6 +124,80 @@ def loud_word_keep(video_path, words, sr: int = 16000, gate_db: float = 10.0,
     return [(r is None) or (r >= gate) for r in rms]
 
 
+def reader_cut_spans(video_path, sr: int = 16000, gate_db: float = 13.0,
+                     min_cut: float = 0.45, win_s: float = 0.10,
+                     min_gap_db: float = 8.0, min_reader_share: float = 0.06):
+    """SOURCE-TIME spans of the off-camera reader (and the dead air) to CUT.
+
+    The reader+repeat workflow: an off-camera reader says each line and the on-camera
+    client repeats it. The client is on the close mic and sits in a clear LOUD band; the
+    reader is far and much quieter (a stable 15-20 dB gap, confirmed on the real clips —
+    him ~-16 dBFS, the reader ~-30 to -40). This measures his band per clip and returns the
+    SUSTAINED stretches that sit well below it — the reader plus the dead air around him —
+    so his loud speech is kept and everything quieter is removed at the AUDIO level.
+
+    Why audio-level, not per-word: it removes the reader even where the diarization merged
+    the two voices onto one label, or the transcription garbled his overlapping quiet
+    speech into gibberish. Cutting whole quiet SPANS (not dropping scattered words) also
+    means no dead 'silent' gaps are left behind and no reliance on the transcription being
+    right — which is exactly where the earlier per-word gate fell down.
+
+    Returns a list of (start, end) source-time spans, or [] when there is no genuine reader
+    signature (a real population of voiced-but-quiet windows, clearly separated from his
+    band). A normal single-voice clip returns [] and is left for the ordinary pause trimmer.
+    Never raises. Tunables: gate_db = how far below his level still counts as HIM (so his
+    softer moments are kept); min_cut = only cut sustained quiet, never a brief soft word
+    between two loud ones (never chops him mid sentence).
+    """
+    try:
+        audio = _decode_mono(video_path, sr)
+        if audio is None:
+            return []
+        win = max(1, int(win_s * sr))
+        n = int(audio.size // win)
+        if n < 20:
+            return []
+        seg = audio[:n * win].reshape(n, win)
+        rms = np.sqrt(np.mean(np.square(seg), axis=1))
+        db = 20.0 * np.log10(rms + 1e-9)
+        top = float(np.percentile(db, 95))                     # his loud peaks
+        voiced = db[db > top - 40.0]                           # drop pure silence
+        if voiced.size < 10:
+            return []
+        his_level = float(np.percentile(voiced, 75))           # the close-mic band
+        gate = his_level - gate_db                             # below here = reader / dead air
+        silence_floor = his_level - 30.0                       # below here = silence, not voice
+        his = db[db >= gate]
+        reader = db[(db >= silence_floor) & (db < gate)]       # voiced but quiet = the reader
+        # Only act on a real reader+repeat signature: a sustained quiet SECOND voice that is
+        # clearly separated from his band. Otherwise keep everything (single voice, or two
+        # people at similar levels) and let the ordinary pause trimmer handle the silences.
+        if his.size == 0 or reader.size < max(4, int(min_reader_share * n)):
+            return []
+        if (float(np.median(his)) - float(np.median(reader))) < min_gap_db:
+            return []
+        keep = db >= gate                                      # True = his loud speech
+        spans = []
+        min_w = max(1, int(round(min_cut / win_s)))
+        i = 0
+        while i < n:
+            if keep[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and not keep[j]:
+                j += 1
+            if (j - i) >= min_w:                               # a SUSTAINED quiet stretch
+                a = (i + 1) * win_s                            # pull edges in one window so
+                b = (j - 1) * win_s                            # his adjacent words never clip
+                if b - a >= 0.20:
+                    spans.append((round(a, 3), round(b, 3)))
+            i = j
+        return spans
+    except Exception:
+        return []
+
+
 def choose_kept_speaker(per_speaker: dict, keep: str = "louder",
                         margin_db: float = 3.0, min_word_share: float = 0.15):
     """Which speaker to keep for ONE source, or None to keep everyone.
