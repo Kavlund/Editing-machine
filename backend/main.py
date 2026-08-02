@@ -1372,7 +1372,14 @@ def preview_video(job_id: str, request: Request, nocaptions: int = 0):
     if not fid:
         raise HTTPException(404, "No video available to preview yet")
     PREVIEW_CACHE.mkdir(parents=True, exist_ok=True)
-    cached = PREVIEW_CACHE / f"{job_id}.mp4"
+    # Key the cache by the job file's mtime so a re-render (which rewrites the job)
+    # ALWAYS fetches the fresh video — a plain {job_id}.mp4 key served the previous
+    # render's video forever, which showed a stale/mismatched clip in the editor.
+    try:
+        _rev = int(path.stat().st_mtime)
+    except Exception:
+        _rev = 0
+    cached = PREVIEW_CACHE / f"{job_id}_{_rev}.mp4"
     if cached.exists() and cached.stat().st_size > 0:
         try:
             os.utime(cached, None)   # touch -> most-recently-used, survives eviction
