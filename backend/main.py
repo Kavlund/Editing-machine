@@ -3175,7 +3175,7 @@ def _run_chat_inner(messages: list, client_id: Optional[str], job_id: Optional[s
         try:
             resp = sdk.messages.create(
                 model=CHAT_MODEL,
-                max_tokens=1024,
+                max_tokens=4096,   # room for a multi-step turn (list_broll + several add_broll)
                 system=system,
                 tools=tools,
                 messages=loop_msgs,
@@ -3193,35 +3193,41 @@ def _run_chat_inner(messages: list, client_id: Optional[str], job_id: Optional[s
         except Exception as e:
             return {"reply": f"AI error: {str(e)[:200]}", "actions": applied}
 
-        if resp.stop_reason == "end_turn":
-            reply = "".join(b.text for b in resp.content if hasattr(b, "text"))
-            return {"reply": reply, "actions": applied}
-
-        if resp.stop_reason == "tool_use":
+        # Execute any tool calls the model emitted, WHATEVER the stop reason. A long turn
+        # ("add four b-rolls" = list_broll then four add_broll, each with a text preamble)
+        # can hit the output cap and report stop_reason "max_tokens" while still carrying
+        # complete tool calls — the old code bailed here with a confusing "couldn't finish"
+        # and dropped the work. Run the tools and keep going; the loop finishes when the
+        # model stops calling them.
+        tool_uses = [b for b in resp.content if getattr(b, "type", None) == "tool_use"]
+        if tool_uses:
             tool_results = []
-            for block in resp.content:
-                if block.type == "tool_use":
-                    # A broken tool must report back to the model, not 500 the chat.
-                    try:
-                        result = _chat_tool_call(block.name, block.input, applied, job_id, last_user_text)
-                    except Exception as e:
-                        traceback.print_exc()
-                        result = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(result),
-                    })
+            for block in tool_uses:
+                # A broken tool must report back to the model, not 500 the chat.
+                try:
+                    result = _chat_tool_call(block.name, block.input, applied, job_id, last_user_text)
+                except Exception as e:
+                    traceback.print_exc()
+                    result = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(result),
+                })
             loop_msgs = loop_msgs + [
                 {"role": "assistant", "content": [b.model_dump() for b in resp.content]},
                 {"role": "user", "content": tool_results},
             ]
-        else:
-            # Any other stop reason (e.g. the reply ran out of token room): return
-            # whatever text we have rather than a blank generic error.
-            reply = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
-            return {"reply": reply or "I couldn't finish that one. Try rephrasing it a bit more specifically.",
-                    "actions": applied}
+            continue
+
+        # No tool calls this turn: return the model's text. end_turn is the normal finish;
+        # any other stop reason that still produced text (e.g. a long explanation that ran
+        # to the cap) is worth showing rather than a blank generic error.
+        reply = "".join(b.text for b in resp.content if hasattr(b, "text")).strip()
+        if reply:
+            return {"reply": reply, "actions": applied}
+        return {"reply": "I couldn't finish that one — the request ran long. Try it once more, "
+                         "or split it into one change at a time.", "actions": applied}
 
     return {"reply": "That needed too many steps. Try one change at a time, and be specific about what to adjust.",
             "actions": applied}
