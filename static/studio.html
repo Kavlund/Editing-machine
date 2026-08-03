@@ -407,8 +407,11 @@
     S.gfxBg=(d.graphics_bg||'');
     // apply existing text edits to the shown chunks
     S.captions.forEach(function(c){if(S.capEdits[norm(c.orig)]!=null)c.text=S.capEdits[norm(c.orig)];});
-    S.graphics=(d.graphics_override||d.edl.graphics||[]).map(function(g){return Object.assign({},g);});
-    S.broll=(d.broll_override||d.edl.broll||[]).map(function(b){return Object.assign({},b);});
+    // Overrides are the editor's saved arrangement; the rendered edl is the truth otherwise.
+    // Guard with != null, NOT `||`: an empty array is truthy in JS, so `override||edl` would
+    // let a stale empty override HIDE the b-roll/graphics that are actually in the video.
+    S.graphics=((d.graphics_override!=null)?d.graphics_override:(d.edl.graphics||[])).map(function(g){return Object.assign({},g);});
+    S.broll=((d.broll_override!=null)?d.broll_override:(d.edl.broll||[])).map(function(b){return Object.assign({},b);});
     S.zooms=(d.zooms||[]).map(function(z){return {at:+z.at,duration:+z.duration||2.5,strength:+z.strength||0.12};});
     (d.cut_spans||[]).forEach(function(c){S.cuts.push({source:c.source,start:+c.start,end:+c.end});});
     (d.split_points||[]).forEach(function(p){S.splits.push({source:p.source,at:+p.at});});
@@ -566,11 +569,15 @@
   // preview (the proxy is the clean speaker), so a placed cutaway was invisible while
   // editing even though it is on the timeline. This shows its presence, timing and clip
   // name during its window; the actual clip frame renders on export.
+  // On-screen time of a b-roll cutaway. Editor entries carry at_sec (absolute); rendered
+  // entries carry start_in_output (its segment's start) PLUS delay (offset into it) — the
+  // real time is their sum, so ignoring delay put every rendered clip at its segment start.
+  function brollT(b){return (b.at_sec!=null)?b.at_sec:((b.start_in_output||0)+(b.delay||0));}
   function paintBrollGuide(t){
     var wrap=$('brollguide');
     if(!S.capOff){wrap.style.display='none';_brollGuideIdx=-1;return;}
     var bi=-1;
-    for(var i=0;i<S.broll.length;i++){var st=(S.broll[i].at_sec!=null)?S.broll[i].at_sec:(S.broll[i].start_in_output||0);var e=st+(S.broll[i].duration||2.5);if(t>=st&&t<e){bi=i;break;}}
+    for(var i=0;i<S.broll.length;i++){var st=brollT(S.broll[i]);var e=st+(S.broll[i].duration||2.5);if(t>=st&&t<e){bi=i;break;}}
     if(scrubbing&&bi===_brollGuideIdx)return;
     if(bi<0){wrap.style.display='none';wrap.innerHTML='';_brollGuideIdx=-1;return;}
     _brollGuideIdx=bi;var b=S.broll[bi],name=(b.file||'clip').split('/').pop();
@@ -898,7 +905,7 @@
     // B-ROLL — draggable
     var tb=$('tBroll');tb.innerHTML='';
     if(!S.broll.length)tb.innerHTML='<span class="empty">none</span>';
-    S.broll.forEach(function(x,i){var st=(x.at_sec!=null)?x.at_sec:(x.start_in_output||0);var b=document.createElement('div');b.className='blk broll'+(i===selBroll?' sel':'');b.style.left=pct(st)+'%';b.style.width=Math.max(3,pct(x.duration||2.5))+'%';b.textContent=(x.file||'clip').split('/').pop();b.title=(x.file||'clip').split('/').pop()+' — click to edit / remove, drag to move';b.dataset.i=i;dragBlock(b,'broll',i,selectBroll);tb.appendChild(b);});
+    S.broll.forEach(function(x,i){var st=brollT(x);var b=document.createElement('div');b.className='blk broll'+(i===selBroll?' sel':'');b.style.left=pct(st)+'%';b.style.width=Math.max(3,pct(x.duration||2.5))+'%';b.textContent=(x.file||'clip').split('/').pop();b.title=(x.file||'clip').split('/').pop()+' — click to edit / remove, drag to move';b.dataset.i=i;dragBlock(b,'broll',i,selectBroll);tb.appendChild(b);});
     // GRAPHICS — draggable
     var tg=$('tGfx');tg.innerHTML='';
     if(!S.graphics.length)tg.innerHTML='<span class="empty">none</span>';

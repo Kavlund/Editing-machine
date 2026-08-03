@@ -2848,6 +2848,11 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             job["broll_remove"] = [r for r in job.get("broll_remove", [])
                                    if not (Path(r.get("file","")).name == fname
                                            and (not r.get("quote") or r["quote"].lower() in quote.lower()))]
+            # A saved editor b-roll arrangement (broll_override) REPLACES the rendered b-roll,
+            # so a stale one would wipe this new clip right back out of the video and the
+            # timeline. The user is managing b-roll through chat now, so let the render place
+            # fresh (auto + every chat add) instead of letting an old snapshot win.
+            job.pop("broll_override", None)
             _rerender_job(job, job_id)
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"broll_added": entry}})
             return {"ok": True, "added": entry, "rerendering": True}
@@ -2864,6 +2869,8 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
                                         and (not quote or quote.lower() in a.get("quote","").lower()))]
             # Suppress it from auto-matches via a removal delta
             job.setdefault("broll_remove", []).append({"file": fname, "quote": quote})
+            # Drop a stale editor override so this removal actually takes (see add_broll).
+            job.pop("broll_override", None)
             _rerender_job(job, job_id)
             applied.append({"type": "job_rerendering", "job_id": job_id,
                             "changes": {"broll_removed": fname + (f" @ '{quote}'" if quote else "")}})
@@ -2914,6 +2921,7 @@ def _chat_tool_call(tool_name: str, tool_input: dict, applied: list, job_id: Opt
             job.pop("broll_add", None)
             job.pop("broll_remove", None)
             job.pop("broll_trims", None)
+            job.pop("broll_override", None)   # also drop the editor arrangement for a true reset
             _rerender_job(job, job_id)
             applied.append({"type": "job_rerendering", "job_id": job_id, "changes": {"broll": "reset to auto-match"}})
             return {"ok": True, "rerendering": True}
