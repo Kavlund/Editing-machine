@@ -159,9 +159,23 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+def _maintenance_on() -> bool:
+    """Whole editor is behind a maintenance wall while the render engine is rebuilt.
+    EDITOR_MAINTENANCE=1 forces it on, =0 forces it off (both instant, no deploy);
+    otherwise a committed MAINTENANCE_ON file at the repo root turns it on."""
+    _m = os.environ.get("EDITOR_MAINTENANCE", "").strip()
+    if _m == "1":
+        return True
+    if _m == "0":
+        return False
+    return (BASE / "MAINTENANCE_ON").exists()
+
+
 def _render_page(filename: str) -> HTMLResponse:
     """Serve a page with the brand substituted in. The static mount can't
     template, so every brand-bearing page is served through here instead."""
+    if _maintenance_on():
+        filename = "maintenance.html"   # every app page shows the maintenance wall
     html = (BASE / "static" / filename).read_text()
     if not BRAND_LOGO:
         # No logo configured for this instance: drop the logo <img> and favicon
